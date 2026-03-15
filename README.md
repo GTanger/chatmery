@@ -3,6 +3,8 @@
 專案名 = **chat** + **memory** 合併（非「聊天室」；若丟 Google 翻譯會誤翻成聊天室，此為自造專案名）。  
 對話外殼（Telegram + Ollama）+ 記憶系統（背版 + archival），Go 實作。**預設專為小模型設計（約 4B 參數等級）**：輕量、迅速、不過度消耗 context，適合本地 4B 左右模型日常對談。記憶不靠「MD 對話紀錄 + 硬式檢索」（那樣使用者在 Tele 會等了又等），改為「抽出的要旨 → 少數條目注入」；可獨立運行，之後可接回遊戲或給 OpenClaw 當記憶後端。
 
+**對話殼優先級**：上網檢索的能力與精準度最重要（模型知識截止於訓練日，必須能查新訊息）；其次為寫文檔、紀錄討論。見 [對話殼—OpenClaw 讀寫本地檔案與文檔](doc/對話殼—OpenClaw%20讀寫本地檔案與文檔.md)。
+
 ## 架構
 
 - **internal/config** — 環境變數與路徑（WORKSPACE、TOKEN、搜尋後端）
@@ -69,9 +71,11 @@ go build -o chatmery ./cmd/chatmery
 
 設計與彙整文件在 `doc/`：
 
+- [記憶流程—概念定稿](doc/記憶流程—概念定稿.md)（雙池、無 MD、回覆只讀短期＋長期）
 - [對話記憶與背版—設計](doc/對話記憶與背版—設計.md)
 - [對話記憶與背版—實作步驟與檔案流程](doc/對話記憶與背版—實作步驟與檔案流程.md)
 - [對話記憶系統—彙整與探討](doc/對話記憶系統—彙整與探討.md)
 - [網上常見的記憶機制—彙整](doc/網上常見的記憶機制—彙整.md)（對照本專案取捨）
+- [對話殼—OpenClaw 讀寫本地檔案與文檔](doc/對話殼—OpenClaw%20讀寫本地檔案與文檔.md)
 
 背版：SOUL = identity 概念，MEMORY = summary 概念；archival = 長期記憶，session facts = 短期 pool，rollover 寫入 archival。之後可將 `internal/memory` 抽出為獨立服務（HTTP API），遊戲或 OpenClaw 以 client 呼叫。
