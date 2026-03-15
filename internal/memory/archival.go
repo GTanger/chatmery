@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // ArchivalEntry 單條長期記憶，對齊設計文件 archival。
@@ -164,8 +165,42 @@ func searchPoolQuery(query string, entries []ArchivalEntry, topK int) []string {
 	return out
 }
 
-// AddSessionFact 加入一筆短期事實；若超過 rolloverLimit 則最舊一筆寫入 archival 並移除。
-func (a *Archival) AddSessionFact(content string) {
+// takeAndRemoveBatchForRefine 取出並移除最舊的至多 maxItems 條，每條 content 截斷為最多 maxRunes 字，供提煉用。呼叫前需持有 mu。
+func (a *Archival) takeAndRemoveBatchForRefine(maxItems, maxRunes int) []string {
+	if len(a.sessionFacts) == 0 {
+		return nil
+	}
+	n := maxItems
+	if n <= 0 {
+		n = 15
+	}
+	if n > len(a.sessionFacts) {
+		n = len(a.sessionFacts)
+	}
+	capRune := func(s string) string {
+		if maxRunes <= 0 || utf8.RuneCountInString(s) <= maxRunes {
+			return s
+		}
+		count := 0
+		for i := range s {
+			if count >= maxRunes {
+				return s[:i] + "…"
+			}
+			count++
+		}
+		return s
+	}
+	out := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, capRune(a.sessionFacts[i].Content))
+	}
+	a.sessionFacts = a.sessionFacts[n:]
+	return out
+}
+
+// AddSessionFact 加入一筆短期事實。若超過 rolloverLimit，會取出並移除一批最舊條目供提煉；
+// 回傳該批內容（每條已截斷），由呼叫端負責提煉後寫入長期；若無需提煉則回傳 nil。
+func (a *Archival) AddSessionFact(content string, refineBatchMax, refineRunesPerItem int) (batchForRefine []string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	e := ArchivalEntry{
@@ -174,11 +209,8 @@ func (a *Archival) AddSessionFact(content string) {
 		Timestamp: time.Now().Format(time.RFC3339),
 	}
 	a.sessionFacts = append(a.sessionFacts, e)
-	if len(a.sessionFacts) > a.rolloverLimit {
-		old := a.sessionFacts[0]
-		a.sessionFacts = a.sessionFacts[1:]
-		a.mu.Unlock()
-		_ = a.Insert(old.Content, old.Tag)
-		a.mu.Lock()
+	if len(a.sessionFacts) <= a.rolloverLimit {
+		return nil
 	}
+	return a.takeAndRemoveBatchForRefine(refineBatchMax, refineRunesPerItem)
 }

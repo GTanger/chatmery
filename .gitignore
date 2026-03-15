@@ -12,6 +12,7 @@ secrets
 /crayfish
 *.exe
 vendor/
+chatmery.log
 
 # Python
 __pycache__/

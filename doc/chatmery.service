@@ -1,0 +1,23 @@
+# Chatmery 開機自啟：systemd user 服務（範例）
+# 建議直接執行：  ./run.sh --install  會自動寫入並 enable，無須手動複製。
+# 手動安裝時：複製到 ~/.config/systemd/user/、把 /path/to/chatmery 改成專案目錄後：
+#   systemctl --user daemon-reload && systemctl --user enable chatmery
+# 查狀態：systemctl --user status chatmery  關閉：systemctl --user stop chatmery
+
+[Unit]
+Description=Chatmery Telegram + Ollama bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/chatmery
+ExecStart=/path/to/chatmery/run.sh
+Restart=on-failure
+RestartSec=10
+
+# 若用系統級安裝（/etc/systemd/system/），取消下行並設為實際使用者
+# User=yourusername
+
+[Install]
+WantedBy=default.target

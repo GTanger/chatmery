@@ -23,6 +23,9 @@ type Config struct {
 	MemorySessionK    int // 當前 session 記憶最多幾條，預設 2
 	WebSearchMaxResults int // 網搜最多幾條，預設 3
 	SnippetMaxRunes   int // 每條記憶/搜尋結果最多幾字（0=不截），預設 120
+	// 提煉（短期→長期）：一次送進模型的短期條數上限、每條最多幾字
+	RefineBatchMaxItems   int // 提煉時最多取幾條短期，預設 15
+	RefineMaxRunesPerItem int // 提煉時每條截斷字數，預設 120
 }
 
 func Load() *Config {
@@ -51,6 +54,8 @@ func Load() *Config {
 		MemorySessionK:    intEnv("CHATMERY_MEMORY_SESSION_K", 2),
 		WebSearchMaxResults: intEnv("CHATMERY_WEB_SEARCH_MAX", 3),
 		SnippetMaxRunes:    intEnv("CHATMERY_SNIPPET_MAX", 120),
+		RefineBatchMaxItems:   intEnv("CHATMERY_REFINE_BATCH_MAX", 15),
+		RefineMaxRunesPerItem: intEnv("CHATMERY_REFINE_RUNES_PER_ITEM", 120),
 	}
 }
 
