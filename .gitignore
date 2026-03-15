@@ -1,0 +1,26 @@
+# 敏感資訊：絕不提交
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials
+secrets
+
+# Go
+/chatmery
+/crayfish
+*.exe
+vendor/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# 本專案資料（可選：若不想把個人 SOUL/記憶推上去可取消註解）
+# SOUL.md
+# MEMORY.md
+# memory/
