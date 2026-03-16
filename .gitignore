@@ -27,3 +27,5 @@ venv/
 # SOUL.md
 # MEMORY.md
 # memory/
+# memory/archival_vectors.jsonl 為向量檢索快取，可選不提交
+# memory/archival_vectors.jsonl

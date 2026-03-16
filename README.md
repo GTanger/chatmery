@@ -40,10 +40,12 @@ cp .env.example .env
 | `CHATMERY_WEB_SEARCH_MAX` | 網搜最多幾條（預設 5） |
 | `CHATMERY_SNIPPET_MAX` | 每條記憶/搜尋結果最多幾字，0=不截（預設 120） |
 | `CHATMERY_REFINE_ROLLOVER` | 短期事實超過此條數才觸發提煉（預設 20） |
+| `CHATMERY_EMBED_MODEL` | Ollama embedding 模型（如 `nomic-embed-text`）；設了即啟用**向量檢索**（語意相似），空則用關鍵字 |
+| `CHATMERY_EMBED_URL` | Embedding API URL，空則同 `OLLAMA_HOST` |
 
 Workspace 下需有 `SOUL.md`（可選，無則用預設）、`MEMORY.md`（可選）。`memory/archival.jsonl` 會自動建立。
 
-**可調數值獨立檔**：在工作區放 `chatmery.tuning`（格式同 .env：每行 `KEY=VALUE`，`#` 為註解），可直觀改模型、記憶條數、提煉門檻、時區等；改完重啟即生效。環境變數優先於此檔。範例：`cp chatmery.tuning.example chatmery.tuning`。
+**可調數值獨立檔**：在工作區放 `chatmery.tuning`（格式同 .env：每行 `KEY=VALUE`，`#` 為註解），可直觀改模型、記憶條數、提煉門檻、時區、等候回覆文案（`CHATMERY_PLACEHOLDER`，多句用 `|` 分隔、每次隨機選一句）等；改完重啟即生效。環境變數優先於此檔。範例：`cp chatmery.tuning.example chatmery.tuning`。
 
 ### 小模型使用建議（預設約 4B 等級）
 
@@ -70,10 +72,14 @@ cp .env.example .env
 ## 讀檔／寫檔／附檔
 
 - **Telegram 附檔**：傳送 PDF 或 .txt / .md 檔案時須加一句說明（Caption），例如「請總結」；無 Caption 時 bot 會提示請加說明。
-- **讀本機檔**：輸入「讀 *路徑*」或「讀取 *路徑*」可將該檔內容注入當輪對話；路徑不鎖工作區（任意可讀路徑），支援 `~`。支援格式：PDF、.txt、.md。
+- **讀本機檔**：
+  - 輸入「讀 *路徑*」或「讀取 *路徑*」可將該檔內容注入當輪對話；路徑**不鎖工作區**（任意 process 可讀路徑），支援 `~` 家目錄。
+  - 路徑含空格可用雙引號或單引號包住，例如：`讀 "/path/檔 案名.pdf" 請總結`。
+  - 支援格式：**PDF**、**.txt**、**.md** / .markdown、**.docx**（Word）、**.xlsx**（Excel）、**.odt** / **.ods**（OpenDocument）；單檔內容上限約 28000 字（超出會截斷）。**圖片**（OCR 或視覺模型）可依需求另行擴充，目前未內建。
 - **寫入工作區**：輸入「寫 *路徑* *內容*」或「寫入 *路徑* *內容*」可將文字寫入工作區內檔案；路徑限工作區內（禁止 `..`），父目錄會自動建立。例：`寫 notes/總結.txt 今日結論：...`。
 
-記憶存檔位置：長期 `memory/archival.jsonl`，背版 `SOUL.md`、`MEMORY.md`（見上方架構）。
+記憶存檔位置：長期 `memory/archival.jsonl`，背版 `SOUL.md`、`MEMORY.md`（見上方架構）。  
+**向量檢索**：設 `CHATMERY_EMBED_MODEL` 後，長期與短期檢索改為「語意相似度」（不記得句子、記得內容）；向量存於 `memory/archival_vectors.jsonl`，首次啟用會對既有條目補算（Backfill）。
 
 ## 手動建置與執行
 
@@ -87,6 +93,7 @@ go build -o chatmery ./cmd/chatmery
 
 設計與彙整文件在 `doc/`：
 
+- [專案進度](doc/專案進度.md)（已完成／未完成／模組一覽）
 - [記憶流程—概念定稿](doc/記憶流程—概念定稿.md)（雙池、無 MD、回覆只讀短期＋長期）
 - [對話記憶與背版—設計](doc/對話記憶與背版—設計.md)
 - [對話記憶與背版—實作步驟與檔案流程](doc/對話記憶與背版—實作步驟與檔案流程.md)

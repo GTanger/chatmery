@@ -30,6 +30,11 @@ type Config struct {
 	RefineBatchMaxItems   int   // 提煉時最多取幾條短期，預設 15
 	RefineMaxRunesPerItem int   // 提煉時每條截斷字數，預設 120
 	Timezone              string // IANA 時區（如 Asia/Taipei），空則用主機當地；對齊 OpenClaw 的 userTimezone
+	// 向量檢索（語意相似）：空則用關鍵字檢索
+	EmbedModel string // Ollama embedding 模型，如 nomic-embed-text、embeddinggemma；空=關閉
+	EmbedURL   string // Embedding API URL，預設同 OLLAMA_HOST
+	// 等候回覆時的 placeholder 文案；多句時每次隨機選一句，空則用內建預設
+	PlaceholderMessages []string
 }
 
 func Load() *Config {
@@ -61,6 +66,9 @@ func Load() *Config {
 		RefineBatchMaxItems:   15,
 		RefineMaxRunesPerItem: 120,
 		Timezone:              "",
+		EmbedModel:            getEnv("CHATMERY_EMBED_MODEL", ""),
+		EmbedURL:              getEnv("CHATMERY_EMBED_URL", ""),
+		PlaceholderMessages:   nil, // 由 tuning/env 填；nil 或空則 main 用內建預設
 	}
 	applyTuningFile(cfg, filepath.Join(workspace, "chatmery.tuning"))
 	applyEnvOverrides(cfg)
@@ -132,8 +140,27 @@ func applyTuningFile(cfg *Config, path string) {
 			}
 		case "CHATMERY_TZ", "TZ":
 			cfg.Timezone = val
+		case "CHATMERY_EMBED_MODEL":
+			cfg.EmbedModel = val
+		case "CHATMERY_EMBED_URL":
+			cfg.EmbedURL = val
+		case "CHATMERY_PLACEHOLDER":
+			cfg.PlaceholderMessages = splitPlaceholders(val)
 		}
 	}
+}
+
+// splitPlaceholders 依 | 切分，trim 每段，過濾空字串。
+func splitPlaceholders(s string) []string {
+	parts := strings.Split(s, "|")
+	var out []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // applyEnvOverrides 環境變數覆寫 cfg（同 key 時 env 優先）。
@@ -172,6 +199,18 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.Timezone = v
 	} else if v := os.Getenv("TZ"); v != "" && cfg.Timezone == "" {
 		cfg.Timezone = v
+	}
+	if v := os.Getenv("CHATMERY_EMBED_MODEL"); v != "" {
+		cfg.EmbedModel = v
+	}
+	if v := os.Getenv("CHATMERY_EMBED_URL"); v != "" {
+		cfg.EmbedURL = v
+	}
+	if cfg.EmbedURL == "" && cfg.EmbedModel != "" {
+		cfg.EmbedURL = cfg.OllamaURL
+	}
+	if v := os.Getenv("CHATMERY_PLACEHOLDER"); v != "" {
+		cfg.PlaceholderMessages = splitPlaceholders(v)
 	}
 }
 

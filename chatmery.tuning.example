@@ -5,6 +5,9 @@
 CHATMERY_MODEL=qwen-4b-slim:latest   # Ollama 模型名稱
 OLLAMA_HOST=http://localhost:11434   # Ollama 服務網址
 
+# 等候回覆時的文案（多句用 | 分隔，每次隨機選一句；空則用內建「八百里加急吐字中🐎」）
+CHATMERY_PLACEHOLDER=八百里加急吐字中🐎|稍候，馬兒在跑|正在想⋯|馬上好
+
 # 搜尋後端（API key 仍用 .env）
 CHATMERY_SEARCH=brave                # 網搜後端：brave 或 tavily
 
@@ -21,3 +24,7 @@ CHATMERY_REFINE_RUNES_PER_ITEM=120   # 提煉時每條內容最多幾字
 
 # 時區（模型回答日期/時間用；IANA 名稱）
 CHATMERY_TZ=Asia/Taipei              # 例：Asia/Taipei、America/New_York；空則用主機當地
+
+# 向量檢索（語意相似：不記得句子、記得內容；空則用關鍵字檢索）
+CHATMERY_EMBED_MODEL=                # Ollama embedding 模型，如 nomic-embed-text、embeddinggemma；空=關閉
+CHATMERY_EMBED_URL=                  # Embedding API URL；空則同 OLLAMA_HOST

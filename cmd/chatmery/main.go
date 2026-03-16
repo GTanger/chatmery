@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
@@ -36,7 +37,15 @@ func main() {
 	log.Printf("Chatmery 啟動 - WORKSPACE=%s SEARCH=%s", cfg.Workspace, cfg.SearchBackend)
 
 	backstory := memory.NewBackstory(cfg.SoulPath, cfg.MemoryPath)
-	archival := memory.NewArchival(cfg.ArchivalPath, cfg.RefineRolloverLimit)
+	var embedder memory.Embedder
+	if cfg.EmbedModel != "" {
+		embedder = ollama.NewEmbedClient(cfg.EmbedURL, cfg.EmbedModel)
+		log.Printf("Chatmery 啟動 - 向量檢索已啟用（embed 模型: %s）", cfg.EmbedModel)
+	}
+	archival := memory.NewArchival(cfg.ArchivalPath, cfg.RefineRolloverLimit, embedder)
+	if embedder != nil {
+		_ = archival.BackfillVectors()
+	}
 	searchBackend := &search.Backend{
 		Kind:         cfg.SearchBackend,
 		BraveAPIKey:  cfg.BraveAPIKey,
@@ -81,7 +90,7 @@ func main() {
 			_ = os.Remove(localPath)
 			if err != nil || extracted == "" {
 				log.Printf("extract file: %v", err)
-				_, _ = bot.Send(tgbotapi.NewMessage(chatID, "目前僅支援 PDF 與純文字檔（.txt, .md），且需可擷取文字。"))
+				_, _ = bot.Send(tgbotapi.NewMessage(chatID, "目前支援格式：PDF、.txt、.md、.docx、.xlsx、.odt、.ods；需可擷取文字。"))
 				continue
 			}
 			docContext = "## 附檔內容\n" + extracted + "\n\n"
@@ -120,7 +129,7 @@ func main() {
 				extracted, err := document.ExtractText(absPath)
 				if err != nil || extracted == "" {
 					log.Printf("read file extract: %v", err)
-					_, _ = bot.Send(tgbotapi.NewMessage(chatID, "無法讀取該檔案（路徑不存在或格式僅支援 PDF / .txt / .md）。"))
+					_, _ = bot.Send(tgbotapi.NewMessage(chatID, "無法讀取該檔案（路徑不存在或格式僅支援 PDF、.txt、.md、.docx、.xlsx、.odt、.ods）。"))
 					continue
 				}
 				docContext = "## 附檔內容\n" + extracted + "\n\n"
@@ -249,10 +258,11 @@ func main() {
 			"\n\n## 即時\n" + webContext +
 			"\n\n" + docContext +
 			"## 背景\n" + summary +
-			"\n\n## 能力邊界\n你可依本則對話、記憶、即時搜尋與上方的「附檔內容」（若有）回答。使用者以「讀 /path」或「讀取 /path」可讀本機檔並放入「附檔內容」；以「寫 path 內容」或「寫入 path 內容」可將文字寫入工作區內檔案。若使用者問能力問題，請直接說明。\n\n回覆要點：僅依「即時」與「附檔內容」區塊回答，沒寫到的不要猜、不要延伸。若搜尋結果與使用者問題明顯不符或不足以回答，請直接說「搜尋結果與問題不太相符」或「目前沒有找到足夠相關資訊」，勿編造。簡短對談、不列點。"
+			"\n\n## 能力邊界\n你可依本則對話、記憶、即時搜尋與上方的「附檔內容」（若有）回答。使用者以「讀 /path」或「讀取 /path」可讀本機檔並放入「附檔內容」；以「寫 path 內容」或「寫入 path 內容」可將文字寫入工作區內檔案。若使用者問「你能做什麼」「能讀檔嗎」等能力問題，請直接根據上述讀檔、寫檔、搜尋能力簡短說明即可，勿輸出「正在聯網」「正在思考」等語句。\n\n回覆要點：僅依「即時」與「附檔內容」區塊回答，沒寫到的不要猜、不要延伸。若搜尋結果與使用者問題明顯不符或不足以回答，請直接說「搜尋結果與問題不太相符」或「目前沒有找到足夠相關資訊」，勿編造。簡短對談、不列點。"
 
-		// 4) 先回「八百里加急吐字中🐎」
-		placeholder, err := bot.Send(tgbotapi.NewMessage(chatID, "八百里加急吐字中🐎"))
+		// 4) 先回等候文案（可設多句，每次隨機選一句）
+		placeholderText := pickPlaceholder(cfg.PlaceholderMessages)
+		placeholder, err := bot.Send(tgbotapi.NewMessage(chatID, placeholderText))
 		if err != nil {
 			log.Printf("send placeholder: %v", err)
 			continue
@@ -265,6 +275,7 @@ func main() {
 		}
 		var fullResponse string
 		editMsg := tgbotapi.NewEditMessageText(chatID, placeholder.MessageID, "")
+		log.Printf("[ollama] chat stream start model=%s", cfg.Model)
 		fullResponse, err = ollamaClient.ChatStream(messages, func(chunk string) {
 			fullResponse += chunk
 			if len(fullResponse)%30 < len(chunk) {
@@ -277,10 +288,13 @@ func main() {
 			}
 		})
 		if err != nil {
-			log.Printf("ollama: %v", err)
-			editMsg.Text = "錯誤: " + err.Error()
+			log.Printf("[ollama] chat stream error: %v", err)
+			editMsg.Text = "錯誤: " + err.Error() + "（請確認 Ollama 已啟動且模型 " + cfg.Model + " 可用）"
 			_, _ = bot.Request(editMsg)
 			continue
+		}
+		if fullResponse == "" {
+			log.Printf("[ollama] chat stream returned empty reply")
 		}
 		editMsg.Text = fullResponse
 		if len(editMsg.Text) > 4000 {
@@ -298,6 +312,14 @@ func main() {
 func isRestartCommand(text string) bool {
 	s := strings.TrimSpace(strings.ToLower(text))
 	return s == "/restart" || strings.HasPrefix(s, "/restart@")
+}
+
+// pickPlaceholder 從設定的多句中隨機選一句；空則用內建預設。
+func pickPlaceholder(msgs []string) string {
+	if len(msgs) == 0 {
+		return "八百里加急吐字中🐎"
+	}
+	return msgs[rand.Intn(len(msgs))]
 }
 
 func hasSearchIntent(text string, keywords []string) bool {
