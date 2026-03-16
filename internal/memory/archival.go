@@ -305,7 +305,7 @@ func (a *Archival) takeAndRemoveBatchForRefine(maxItems, maxRunes int) []string 
 	return out
 }
 
-// AddSessionFact 加入一筆短期事實。若超過 rolloverLimit，會取出並移除一批最舊條目供提煉；
+// AddSessionFact 加入一筆短期事實。若已達 rolloverLimit 筆（含）以上，會取出並移除一批最舊條目供提煉；
 // 回傳該批內容（每條已截斷），由呼叫端負責提煉後寫入長期；若無需提煉則回傳 nil。
 func (a *Archival) AddSessionFact(content string, refineBatchMax, refineRunesPerItem int) (batchForRefine []string) {
 	a.mu.Lock()
@@ -324,7 +324,8 @@ func (a *Archival) AddSessionFact(content string, refineBatchMax, refineRunesPer
 			a.sessionVectors = append(a.sessionVectors, nil)
 		}
 	}
-	if len(a.sessionFacts) <= a.rolloverLimit {
+	// 滿 rolloverLimit 筆就提煉（例如設 5 則第 5 筆後就觸發），不再等多一筆
+	if len(a.sessionFacts) < a.rolloverLimit {
 		return nil
 	}
 	batch := a.takeAndRemoveBatchForRefine(refineBatchMax, refineRunesPerItem)

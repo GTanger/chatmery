@@ -9,12 +9,15 @@ secrets
 
 # Go
 /chatmery
+/chatmery-web
 /crayfish
 *.exe
 vendor/
 chatmery.log
+chatmery-web.log
 .chatmery_last_chat_id
 chatmery.tuning
+/memory/
 
 # Python
 __pycache__/

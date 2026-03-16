@@ -13,28 +13,51 @@ type Config struct {
 	SoulPath       string
 	MemoryPath     string
 	ArchivalPath   string
-	Token          string
 	Model          string
 	OllamaURL      string
+	// 聊天後端：ollama（預設）| openai | gemini | openrouter
+	Provider           string // ollama | openai | gemini | openrouter
+	OpenAIBaseURL      string
+	OpenAIAPIKey       string
+	GeminiBaseURL      string // 例：https://generativelanguage.googleapis.com/v1beta；空則用預設
+	GeminiAPIKey       string // 僅從環境變數讀取
+	OpenRouterBaseURL  string // 例：https://openrouter.ai/api/v1
+	OpenRouterAPIKey   string // 僅從環境變數讀取
 	SearchBackend  string
 	BraveAPIKey    string
 	TavilyAPIKey   string
 	SearchKeywords []string
 	// 小模型優化：控制注入量，節省 context、加快回覆
-	MemoryLongTermK   int // 長期記憶最多幾條，預設 3
-	MemorySessionK    int // 當前 session 記憶最多幾條，預設 2
+	MemoryLongTermK   int // 長期記憶最多幾條（答覆時），預設 3
+	MemorySessionK    int // 短期記憶最多幾條（答覆時），預設 5
 	WebSearchMaxResults int // 網搜最多幾條，預設 3
 	SnippetMaxRunes   int // 每條記憶/搜尋結果最多幾字（0=不截），預設 120
-	// 提煉（短期→長期）：短期條數超過 rollover 才觸發；一次送進模型的條數上限、每條最多幾字
-	RefineRolloverLimit   int   // 短期事實超過此數才提煉，預設 20
-	RefineBatchMaxItems   int   // 提煉時最多取幾條短期，預設 15
-	RefineMaxRunesPerItem int   // 提煉時每條截斷字數，預設 120
+	// 四池一魂：答覆注入條數 當前1+靈魂1+核心2+長期3+短期5
+	MemoryCurrentK int // 當前 1
+	MemorySoulK    int // 靈魂 1
+	MemoryCoreK    int // 核心 2
+	MemoryLongK    int // 長期 3
+	MemoryShortK   int // 短期 5
+	// 四池容量與濃縮：短期 cap→濃縮進長期；長期 cap→濃縮進核心；核心 cap→濃縮進靈魂
+	ShortTermCap    int // 短期池上限 200
+	ShortCondenseTo int // 短期滿後濃縮成幾句進長期 50
+	LongTermCap     int // 長期池上限 100
+	LongCondenseTo  int // 長期滿後濃縮成幾句進核心 5
+	CoreCap         int // 核心池上限 20
+	CoreCondenseTo  int // 核心滿後濃縮成 1 句進靈魂
+	// 舊提煉參數（相容用，四池啟用時以 SnippetMaxRunes 截斷）
+	RefineRolloverLimit   int
+	RefineBatchMaxItems   int
+	RefineMaxRunesPerItem int
 	Timezone              string // IANA 時區（如 Asia/Taipei），空則用主機當地；對齊 OpenClaw 的 userTimezone
 	// 向量檢索（語意相似）：空則用關鍵字檢索
-	EmbedModel string // Ollama embedding 模型，如 nomic-embed-text、embeddinggemma；空=關閉
-	EmbedURL   string // Embedding API URL，預設同 OLLAMA_HOST
+	EmbedModel    string // 模型名（ollama: nomic-embed-text；openai: text-embedding-3-small；gemini: text-embedding-004）；空=關閉
+	EmbedURL      string // Ollama embed URL，預設同 OLLAMA_HOST（僅 EmbedProvider=ollama 時用）
+	EmbedProvider string // ollama（預設）| openai | gemini；openai/gemini 時用對應 API key 與 base URL
 	// 等候回覆時的 placeholder 文案；多句時每次隨機選一句，空則用內建預設
 	PlaceholderMessages []string
+	// 聊天／串流請求逾時（秒），含讀取 body；預設 300，避免慢模型觸發 context deadline exceeded
+	ChatTimeoutSec int
 }
 
 func Load() *Config {
@@ -51,24 +74,43 @@ func Load() *Config {
 		SoulPath:              filepath.Join(workspace, "SOUL.md"),
 		MemoryPath:            filepath.Join(workspace, "MEMORY.md"),
 		ArchivalPath:          filepath.Join(workspace, "memory", "archival.jsonl"),
-		Token:                 tokenFromEnv(),
 		Model:                 getEnv("CHATMERY_MODEL", "qwen-4b-slim:latest"),
 		OllamaURL:             getEnv("OLLAMA_HOST", "http://localhost:11434"),
+		Provider:              toLower(getEnv("CHATMERY_PROVIDER", "ollama")),
+		OpenAIBaseURL:         getEnv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+		OpenAIAPIKey:          os.Getenv("OPENAI_API_KEY"),
+		GeminiBaseURL:         getEnv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
+		GeminiAPIKey:          os.Getenv("GEMINI_API_KEY"),
+		OpenRouterBaseURL:     getEnv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+		OpenRouterAPIKey:      os.Getenv("OPENROUTER_API_KEY"),
 		SearchBackend:         toLower(getEnv("CHATMERY_SEARCH", "brave")),
 		BraveAPIKey:           os.Getenv("BRAVE_API_KEY"),
 		TavilyAPIKey:          os.Getenv("TAVILY_API_KEY"),
-		SearchKeywords:        []string{"最新", "新聞", "消息", "訊息", "上網", "搜尋", "查詢", "pixel", "202", "什麼是"},
+		SearchKeywords:        []string{"最新", "新聞", "消息", "訊息", "上網", "搜尋", "查詢", "幫我查", "幫我找", "什麼是", "如何", "怎麼", "為什麼", "哪裡", "最近", "現在", "pixel", "202"},
 		MemoryLongTermK:       3,
-		MemorySessionK:        2,
+		MemorySessionK:        5,
 		WebSearchMaxResults:   5,
 		SnippetMaxRunes:       120,
+		MemoryCurrentK:        1,
+		MemorySoulK:           1,
+		MemoryCoreK:           2,
+		MemoryLongK:           3,
+		MemoryShortK:          5,
+		ShortTermCap:          200,
+		ShortCondenseTo:       50,
+		LongTermCap:           100,
+		LongCondenseTo:        5,
+		CoreCap:               20,
+		CoreCondenseTo:        1,
 		RefineRolloverLimit:   20,
 		RefineBatchMaxItems:   15,
 		RefineMaxRunesPerItem: 120,
 		Timezone:              "",
 		EmbedModel:            getEnv("CHATMERY_EMBED_MODEL", ""),
 		EmbedURL:              getEnv("CHATMERY_EMBED_URL", ""),
+		EmbedProvider:         toLower(getEnv("CHATMERY_EMBED_PROVIDER", "ollama")),
 		PlaceholderMessages:   nil, // 由 tuning/env 填；nil 或空則 main 用內建預設
+		ChatTimeoutSec:        intEnv("CHATMERY_CHAT_TIMEOUT_SEC", 300),
 	}
 	applyTuningFile(cfg, filepath.Join(workspace, "chatmery.tuning"))
 	applyEnvOverrides(cfg)
@@ -113,6 +155,7 @@ func applyTuningFile(cfg *Config, path string) {
 		case "CHATMERY_MEMORY_LONG_K":
 			if n, err := strconv.Atoi(val); err == nil && n >= 0 {
 				cfg.MemoryLongTermK = n
+				cfg.MemoryLongK = n
 			}
 		case "CHATMERY_MEMORY_SESSION_K":
 			if n, err := strconv.Atoi(val); err == nil && n >= 0 {
@@ -138,17 +181,70 @@ func applyTuningFile(cfg *Config, path string) {
 			if n, err := strconv.Atoi(val); err == nil && n >= 0 {
 				cfg.RefineMaxRunesPerItem = n
 			}
+		case "CHATMERY_MEMORY_CORE_K":
+			if n, err := strconv.Atoi(val); err == nil && n >= 0 {
+				cfg.MemoryCoreK = n
+			}
+		case "CHATMERY_MEMORY_SHORT_K":
+			if n, err := strconv.Atoi(val); err == nil && n >= 0 {
+				cfg.MemoryShortK = n
+			}
+		case "CHATMERY_SHORT_TERM_CAP":
+			if n, err := strconv.Atoi(val); err == nil && n > 0 {
+				cfg.ShortTermCap = n
+			}
+		case "CHATMERY_SHORT_CONDENSE_TO":
+			if n, err := strconv.Atoi(val); err == nil && n > 0 {
+				cfg.ShortCondenseTo = n
+			}
+		case "CHATMERY_LONG_TERM_CAP":
+			if n, err := strconv.Atoi(val); err == nil && n > 0 {
+				cfg.LongTermCap = n
+			}
+		case "CHATMERY_LONG_CONDENSE_TO":
+			if n, err := strconv.Atoi(val); err == nil && n > 0 {
+				cfg.LongCondenseTo = n
+			}
+		case "CHATMERY_CORE_CAP":
+			if n, err := strconv.Atoi(val); err == nil && n > 0 {
+				cfg.CoreCap = n
+			}
+		case "CHATMERY_CORE_CONDENSE_TO":
+			if n, err := strconv.Atoi(val); err == nil && n > 0 {
+				cfg.CoreCondenseTo = n
+			}
 		case "CHATMERY_TZ", "TZ":
 			cfg.Timezone = val
 		case "CHATMERY_EMBED_MODEL":
 			cfg.EmbedModel = val
 		case "CHATMERY_EMBED_URL":
 			cfg.EmbedURL = val
+		case "CHATMERY_EMBED_PROVIDER":
+			cfg.EmbedProvider = toLower(val)
 		case "CHATMERY_PLACEHOLDER":
 			cfg.PlaceholderMessages = splitPlaceholders(val)
+		case "CHATMERY_PROVIDER":
+			cfg.Provider = toLower(val)
+		case "OPENAI_BASE_URL":
+			if val != "" {
+				cfg.OpenAIBaseURL = val
+			}
+		case "GEMINI_BASE_URL":
+			if val != "" {
+				cfg.GeminiBaseURL = val
+			}
+		case "OPENROUTER_BASE_URL":
+			if val != "" {
+				cfg.OpenRouterBaseURL = val
+			}
+		case "CHATMERY_CHAT_TIMEOUT_SEC":
+			if n, err := strconv.Atoi(val); err == nil && n > 0 {
+				cfg.ChatTimeoutSec = n
+			}
 		}
 	}
 }
+
 
 // splitPlaceholders 依 | 切分，trim 每段，過濾空字串。
 func splitPlaceholders(s string) []string {
@@ -176,6 +272,7 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if n := intEnv("CHATMERY_MEMORY_LONG_K", -1); n >= 0 {
 		cfg.MemoryLongTermK = n
+		cfg.MemoryLongK = n
 	}
 	if n := intEnv("CHATMERY_MEMORY_SESSION_K", -1); n >= 0 {
 		cfg.MemorySessionK = n
@@ -195,6 +292,33 @@ func applyEnvOverrides(cfg *Config) {
 	if n := intEnv("CHATMERY_REFINE_RUNES_PER_ITEM", -1); n >= 0 {
 		cfg.RefineMaxRunesPerItem = n
 	}
+	if n := intEnv("CHATMERY_MEMORY_CORE_K", -1); n >= 0 {
+		cfg.MemoryCoreK = n
+	}
+	if n := intEnv("CHATMERY_MEMORY_SHORT_K", -1); n >= 0 {
+		cfg.MemoryShortK = n
+	}
+	if n := intEnv("CHATMERY_SHORT_TERM_CAP", -1); n > 0 {
+		cfg.ShortTermCap = n
+	}
+	if n := intEnv("CHATMERY_SHORT_CONDENSE_TO", -1); n > 0 {
+		cfg.ShortCondenseTo = n
+	}
+	if n := intEnv("CHATMERY_LONG_TERM_CAP", -1); n > 0 {
+		cfg.LongTermCap = n
+	}
+	if n := intEnv("CHATMERY_LONG_CONDENSE_TO", -1); n > 0 {
+		cfg.LongCondenseTo = n
+	}
+	if n := intEnv("CHATMERY_CORE_CAP", -1); n > 0 {
+		cfg.CoreCap = n
+	}
+	if n := intEnv("CHATMERY_CORE_CONDENSE_TO", -1); n > 0 {
+		cfg.CoreCondenseTo = n
+	}
+	if n := intEnv("CHATMERY_CHAT_TIMEOUT_SEC", -1); n > 0 {
+		cfg.ChatTimeoutSec = n
+	}
 	if v := os.Getenv("CHATMERY_TZ"); v != "" {
 		cfg.Timezone = v
 	} else if v := os.Getenv("TZ"); v != "" && cfg.Timezone == "" {
@@ -206,11 +330,41 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("CHATMERY_EMBED_URL"); v != "" {
 		cfg.EmbedURL = v
 	}
-	if cfg.EmbedURL == "" && cfg.EmbedModel != "" {
+	if v := os.Getenv("CHATMERY_EMBED_PROVIDER"); v != "" {
+		cfg.EmbedProvider = toLower(v)
+	}
+	if cfg.EmbedURL == "" && cfg.EmbedModel != "" && cfg.EmbedProvider == "ollama" {
 		cfg.EmbedURL = cfg.OllamaURL
 	}
 	if v := os.Getenv("CHATMERY_PLACEHOLDER"); v != "" {
 		cfg.PlaceholderMessages = splitPlaceholders(v)
+	}
+	if v := os.Getenv("CHATMERY_PROVIDER"); v != "" {
+		cfg.Provider = toLower(v)
+	}
+	if v := os.Getenv("OPENAI_BASE_URL"); v != "" {
+		cfg.OpenAIBaseURL = v
+	}
+	if v := os.Getenv("OPENAI_API_KEY"); v != "" {
+		cfg.OpenAIAPIKey = v
+	} else if v := os.Getenv("CHATMERY_OPENAI_API_KEY"); v != "" {
+		cfg.OpenAIAPIKey = v
+	}
+	if v := os.Getenv("GEMINI_BASE_URL"); v != "" {
+		cfg.GeminiBaseURL = v
+	}
+	if v := os.Getenv("GEMINI_API_KEY"); v != "" {
+		cfg.GeminiAPIKey = v
+	} else if v := os.Getenv("CHATMERY_GEMINI_API_KEY"); v != "" {
+		cfg.GeminiAPIKey = v
+	}
+	if v := os.Getenv("OPENROUTER_API_KEY"); v != "" {
+		cfg.OpenRouterAPIKey = v
+	} else if v := os.Getenv("CHATMERY_OPENROUTER_API_KEY"); v != "" {
+		cfg.OpenRouterAPIKey = v
+	}
+	if v := os.Getenv("OPENROUTER_BASE_URL"); v != "" {
+		cfg.OpenRouterBaseURL = v
 	}
 }
 
@@ -228,13 +382,6 @@ func getEnv(key, def string) string {
 		return v
 	}
 	return def
-}
-
-func tokenFromEnv() string {
-	if v := os.Getenv("TELEGRAM_BOT_TOKEN"); v != "" {
-		return v
-	}
-	return os.Getenv("CHATMERY_TELEGRAM_TOKEN")
 }
 
 func toLower(s string) string {

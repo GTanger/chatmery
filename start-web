@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Chatmery Web — 一鍵啟動：建置、開埠 1721（可對應 sw.ygggt.com/chatmery）。
+# 用法：在專案根目錄執行 ./start-web
+set -e
+cd "$(dirname "$0")"
+
+export PATH="/usr/local/go/bin:${PATH}"
+
+echo "建置 chatmery-web…"
+go build -o chatmery-web ./cmd/chatmery-web
+
+PORT="${CHATMERY_WEB_PORT:-1721}"
+if command -v lsof &>/dev/null; then
+  pids=$(lsof -ti :$PORT 2>/dev/null) || true
+  if [[ -n "$pids" ]]; then
+    echo "結束佔用 :$PORT 的 process：$pids"
+    kill $pids 2>/dev/null || true
+    sleep 1
+  fi
+elif command -v fuser &>/dev/null; then
+  if fuser ${PORT}/tcp &>/dev/null; then
+    echo "結束佔用 :$PORT 的 process…"
+    fuser -k ${PORT}/tcp 2>/dev/null || true
+    sleep 1
+  fi
+fi
+
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source .env
+  set +a
+fi
+
+echo "啟動 Chatmery Web（PORT=$PORT）→ http://localhost:$PORT/chatmery/"
+exec env CHATMERY_WEB_PORT=$PORT ./chatmery-web

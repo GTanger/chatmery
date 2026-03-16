@@ -19,15 +19,18 @@ type Client struct {
 	Client  *http.Client
 }
 
-// NewClient 建立 Ollama client。
-func NewClient(baseURL, model string) *Client {
+// NewClient 建立 Ollama client。timeout 為 0 時使用預設 300 秒（串流易超時，需較長）。
+func NewClient(baseURL, model string, timeout time.Duration) *Client {
 	if baseURL == "" {
 		baseURL = "http://localhost:11434"
+	}
+	if timeout <= 0 {
+		timeout = 300 * time.Second
 	}
 	return &Client{
 		BaseURL: strings.TrimSuffix(baseURL, "/"),
 		Model:   model,
-		Client:  &http.Client{Timeout: 120 * time.Second},
+		Client:  &http.Client{Timeout: timeout},
 	}
 }
 

@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+	<script>
+		(function () {
+			function setVH() {
+				var vv = window.visualViewport;
+				var h = (vv && vv.height) ? vv.height : window.innerHeight;
+				var t = (vv && vv.offsetTop !== undefined) ? vv.offsetTop : 0;
+				document.documentElement.style.setProperty('--app-height', h + 'px');
+				document.documentElement.style.setProperty('--vv-top', t + 'px');
+			}
+			setVH();
+			window.addEventListener('resize', setVH);
+			if (window.visualViewport) {
+				window.visualViewport.addEventListener('resize', setVH);
+				window.visualViewport.addEventListener('scroll', setVH);
+			}
+		})();
+	</script>
+	<meta name="theme-color" content="#1e2328">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+	<title>Chatmery</title>
+	<base href="/chatmery/">
+	<!-- 前端有改記得改版次 ?v= 避免快取舊檔 -->
+	<link rel="stylesheet" href="style.css?v=12">
+</head>
+<body>
+	<div id="app" class="chat-app">
+		<header class="chat-header">
+			<h1 class="chat-title">Chatmery</h1>
+			<span class="chat-header-model" id="chat-header-model" aria-label="當前對話模型"></span>
+		</header>
+		<div id="messages" class="chat-messages" role="log" aria-live="polite"></div>
+		<div class="chat-input-wrap">
+			<form id="chat-form" class="chat-form">
+				<input type="file" id="chat-file" name="file" class="chat-file-input" accept=".pdf,.txt,.md,.docx,.xlsx,.odt,.ods" aria-label="插入檔案">
+				<label for="chat-file" class="chat-attach-btn" title="插入檔案（PDF、txt、md、docx、xlsx、odt、ods）">📎</label>
+				<button type="button" id="chat-web-btn" class="chat-web-btn" title="上網：開啟後每則訊息都會先搜尋網路" aria-pressed="false" aria-label="上網搜尋（開啟後每則都會搜尋）">🌐</button>
+				<label for="chat-input" class="sr-only">輸入訊息</label>
+				<textarea id="chat-input" name="text" class="chat-input" placeholder="輸入訊息…（Enter 換行，Ctrl+Enter 送出）" autocomplete="off" maxlength="4000" rows="1"></textarea>
+				<button type="submit" id="chat-send">送出</button>
+			</form>
+			<p id="chat-file-name" class="chat-file-name" aria-live="polite"></p>
+		</div>
+	</div>
+	<!-- 前端有改記得改版次 ?v= 避免快取舊檔 -->
+	<script src="main.js?v=12"></script>
+</body>
+</html>
