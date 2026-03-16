@@ -32,17 +32,28 @@ EOF
   exit 0
 fi
 
-# 無參數：由 systemd 在後台跑，確認啟動後提醒可關閉終端
+# 無參數：先編譯再由 systemd 重啟（一鍵更新程式碼並跑起來）
 if [[ -z "$1" ]]; then
-  if ! systemctl --user start chatmery 2>/dev/null; then
+  if ! command -v go >/dev/null 2>&1; then
+    echo "[$(ts)] 錯誤：找不到 go，請先安裝 Go 或確保 PATH 含 go"
+    exit 1
+  fi
+  echo "[$(ts)] 編譯中…"
+  if ! go build -o "$CHATMERY_DIR/chatmery" ./cmd/chatmery; then
+    echo "[$(ts)] 編譯失敗，不重啟服務"
+    exit 1
+  fi
+  if ! systemctl --user restart chatmery 2>/dev/null; then
     echo "[$(ts)] 請先執行 ./run.sh --install 安裝開機自啟，再執行 ./run.sh"
     exit 1
   fi
   sleep 2
   if systemctl --user is-active --quiet chatmery 2>/dev/null; then
-    echo "[$(ts)] Chatmery 已在後台執行，可關閉終端。查狀態：systemctl --user status chatmery"
+    echo "[$(ts)] Chatmery 已重啟並在後台執行，可關閉終端。查狀態：systemctl --user status chatmery"
   else
-    echo "[$(ts)] 啟動中，可關閉終端。若異常請查：systemctl --user status chatmery"
+    echo "[$(ts)] 服務未在運行，請查原因：journalctl --user -u chatmery -n 50 --no-pager"
+    echo "[$(ts)] 或執行：systemctl --user status chatmery"
+    exit 1
   fi
   exit 0
 fi
@@ -85,4 +96,8 @@ if [[ "$1" == "--background" ]]; then
 fi
 
 # --service：systemd 呼叫，真正跑 bot（擋住直到結束）
+# 若有已編譯的 chatmery 則直接執行，避免 systemd 環境無 go 導致啟動失敗
+if [[ -x "$CHATMERY_DIR/chatmery" ]]; then
+  exec "$CHATMERY_DIR/chatmery"
+fi
 exec go run ./cmd/chatmery

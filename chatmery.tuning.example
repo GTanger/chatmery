@@ -1,0 +1,23 @@
+# 複製為 chatmery.tuning 放在工作區，直觀調整數值；環境變數會覆寫此檔
+# cp chatmery.tuning.example chatmery.tuning
+
+# 模型與 Ollama
+CHATMERY_MODEL=qwen-4b-slim:latest   # Ollama 模型名稱
+OLLAMA_HOST=http://localhost:11434   # Ollama 服務網址
+
+# 搜尋後端（API key 仍用 .env）
+CHATMERY_SEARCH=brave                # 網搜後端：brave 或 tavily
+
+# 記憶注入量（每輪回覆時從兩池各取幾條、網搜幾條、每條最多幾字）
+CHATMERY_MEMORY_LONG_K=3             # 長期記憶最多取幾條注入 prompt
+CHATMERY_MEMORY_SESSION_K=2          # 當前 session 短期記憶最多取幾條
+CHATMERY_WEB_SEARCH_MAX=5            # 網搜最多幾條結果
+CHATMERY_SNIPPET_MAX=120             # 每條記憶/搜尋結果最多幾字（0=不截）
+
+# 提煉（短期事實超過 rollover 才觸發，一次送幾條、每條最多幾字）
+CHATMERY_REFINE_ROLLOVER=20          # 短期事實超過此條數才提煉進長期
+CHATMERY_REFINE_BATCH_MAX=15         # 提煉時一次送幾條給模型
+CHATMERY_REFINE_RUNES_PER_ITEM=120   # 提煉時每條內容最多幾字
+
+# 時區（模型回答日期/時間用；IANA 名稱）
+CHATMERY_TZ=Asia/Taipei              # 例：Asia/Taipei、America/New_York；空則用主機當地

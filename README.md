@@ -37,10 +37,13 @@ cp .env.example .env
 | `TAVILY_API_KEY` | Tavily API key |
 | `CHATMERY_MEMORY_LONG_K` | 長期記憶最多幾條（預設 3） |
 | `CHATMERY_MEMORY_SESSION_K` | 當前 session 記憶最多幾條（預設 2） |
-| `CHATMERY_WEB_SEARCH_MAX` | 網搜最多幾條（預設 3） |
+| `CHATMERY_WEB_SEARCH_MAX` | 網搜最多幾條（預設 5） |
 | `CHATMERY_SNIPPET_MAX` | 每條記憶/搜尋結果最多幾字，0=不截（預設 120） |
+| `CHATMERY_REFINE_ROLLOVER` | 短期事實超過此條數才觸發提煉（預設 20） |
 
 Workspace 下需有 `SOUL.md`（可選，無則用預設）、`MEMORY.md`（可選）。`memory/archival.jsonl` 會自動建立。
+
+**可調數值獨立檔**：在工作區放 `chatmery.tuning`（格式同 .env：每行 `KEY=VALUE`，`#` 為註解），可直觀改模型、記憶條數、提煉門檻、時區等；改完重啟即生效。環境變數優先於此檔。範例：`cp chatmery.tuning.example chatmery.tuning`。
 
 ### 小模型使用建議（預設約 4B 等級）
 
@@ -60,9 +63,17 @@ cp .env.example .env
 
 - **第一次**：先執行 `./run.sh --install`，會寫入 systemd 服務並 enable（開機自啟）。
 - **之後**：執行 `./run.sh` 會呼叫 `systemctl --user start chatmery`，等約 2 秒確認已在後台跑，再提示「Chatmery 已在後台執行，可關閉終端」。
-- 本機需已啟動 Ollama。查狀態：`systemctl --user status chatmery`。
+- 本機需已啟動 Ollama。查狀態：`systemctl --user status chatmery`。在 Telegram 傳送 `/restart` 可重啟程式（會先回覆「已重新啟動」，再由 systemd 重啟）。
 - 若未安裝過開機自啟就執行 `./run.sh`，會提示請先執行 `./run.sh --install`。
 - **`--background`**：不用 systemd，改為 nohup 後台跑（log 寫入 `chatmery.log`），適合未做 `--install` 時用。
+
+## 讀檔／寫檔／附檔
+
+- **Telegram 附檔**：傳送 PDF 或 .txt / .md 檔案時須加一句說明（Caption），例如「請總結」；無 Caption 時 bot 會提示請加說明。
+- **讀本機檔**：輸入「讀 *路徑*」或「讀取 *路徑*」可將該檔內容注入當輪對話；路徑不鎖工作區（任意可讀路徑），支援 `~`。支援格式：PDF、.txt、.md。
+- **寫入工作區**：輸入「寫 *路徑* *內容*」或「寫入 *路徑* *內容*」可將文字寫入工作區內檔案；路徑限工作區內（禁止 `..`），父目錄會自動建立。例：`寫 notes/總結.txt 今日結論：...`。
+
+記憶存檔位置：長期 `memory/archival.jsonl`，背版 `SOUL.md`、`MEMORY.md`（見上方架構）。
 
 ## 手動建置與執行
 

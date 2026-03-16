@@ -13,6 +13,8 @@ secrets
 *.exe
 vendor/
 chatmery.log
+.chatmery_last_chat_id
+chatmery.tuning
 
 # Python
 __pycache__/
