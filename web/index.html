@@ -26,7 +26,7 @@
 	<title>Chatmery</title>
 	<base href="/chatmery/">
 	<!-- 前端有改記得改版次 ?v= 避免快取舊檔 -->
-	<link rel="stylesheet" href="style.css?v=14">
+	<link rel="stylesheet" href="style.css?v=15">
 </head>
 <body>
 	<div id="app" class="chat-app">
@@ -44,9 +44,16 @@
 				<button type="submit" id="chat-send">送出</button>
 			</form>
 			<p id="chat-file-name" class="chat-file-name" aria-live="polite"></p>
+			<p id="chat-add-knowledge-wrap" class="chat-add-knowledge-wrap" style="display:none;">
+				<label><input type="checkbox" id="chat-add-to-knowledge" name="add_to_knowledge" value="1"> 加入知識庫</label>
+			</p>
+			<p class="chat-knowledge-link-wrap">
+				<button type="button" id="chat-knowledge-btn" class="chat-knowledge-link" title="模型的知識庫來源">📚 知識庫</button>
+			</p>
+			<div id="knowledge-panel" class="knowledge-panel" role="dialog" aria-label="知識庫來源" style="display:none;"></div>
 		</div>
 	</div>
 	<!-- 前端有改記得改版次 ?v= 避免快取舊檔 -->
-	<script src="main.js?v=14"></script>
+	<script src="main.js?v=15"></script>
 </body>
 </html>

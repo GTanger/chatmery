@@ -23,6 +23,10 @@
 	const fileInput = document.getElementById('chat-file');
 	const fileNameEl = document.getElementById('chat-file-name');
 	const webBtn = document.getElementById('chat-web-btn');
+	const addKnowledgeWrap = document.getElementById('chat-add-knowledge-wrap');
+	const addToKnowledgeCheck = document.getElementById('chat-add-to-knowledge');
+	const knowledgeBtn = document.getElementById('chat-knowledge-btn');
+	const knowledgePanel = document.getElementById('knowledge-panel');
 
 	var serverWasDown = false;
 	var webSearchOn = false;
@@ -63,11 +67,67 @@
 
 	if (fileInput) {
 		fileInput.addEventListener('change', function () {
-			if (fileNameEl) {
-				fileNameEl.textContent = fileInput.files && fileInput.files[0] ? fileInput.files[0].name : '';
-			}
+			var hasFile = fileInput.files && fileInput.files[0];
+			if (fileNameEl) fileNameEl.textContent = hasFile ? fileInput.files[0].name : '';
+			if (addKnowledgeWrap) addKnowledgeWrap.style.display = hasFile ? 'block' : 'none';
+			if (addToKnowledgeCheck) addToKnowledgeCheck.checked = false;
 		});
 	}
+	function openKnowledgePanel() {
+		if (!knowledgePanel) return;
+		knowledgePanel.style.display = 'block';
+		fetch('api/knowledge/sources').then(function (res) {
+			if (!res.ok) return res.json().then(function () { knowledgePanel.innerHTML = '<p class="knowledge-panel-err">無法載入來源</p>'; });
+			return res.json();
+		}).then(function (data) {
+			if (!data || !data.sources) return;
+			var list = data.sources;
+			if (list.length === 0) {
+				knowledgePanel.innerHTML = '<p class="knowledge-panel-empty">尚無來源</p><button type="button" class="knowledge-panel-close">關閉</button>';
+			} else {
+				var html = '<ul class="knowledge-sources-list">';
+				for (var i = 0; i < list.length; i++) {
+					var s = list[i];
+					html += '<li><span class="knowledge-source-name">' + escapeHtml(s) + '</span> <button type="button" class="knowledge-delete-btn" data-source="' + escapeAttr(s) + '" title="刪除此來源">刪除</button></li>';
+				}
+				html += '</ul><button type="button" class="knowledge-panel-close">關閉</button>';
+				knowledgePanel.innerHTML = html;
+				knowledgePanel.querySelectorAll('.knowledge-delete-btn').forEach(function (btn) {
+					btn.addEventListener('click', function () {
+						var src = btn.getAttribute('data-source');
+						if (!src) return;
+						fetch('api/knowledge/sources?source=' + encodeURIComponent(src), { method: 'DELETE' }).then(function (r) {
+							if (r.ok) openKnowledgePanel();
+						});
+					});
+				});
+			}
+			knowledgePanel.querySelectorAll('.knowledge-panel-close').forEach(function (btn) {
+				btn.addEventListener('click', function () { knowledgePanel.style.display = 'none'; });
+			});
+		}).catch(function () {
+			knowledgePanel.innerHTML = '<p class="knowledge-panel-err">無法載入</p><button type="button" class="knowledge-panel-close">關閉</button>';
+			knowledgePanel.querySelectorAll('.knowledge-panel-close').forEach(function (btn) {
+				btn.addEventListener('click', function () { knowledgePanel.style.display = 'none'; });
+			});
+		});
+	}
+	function escapeHtml(s) {
+		var div = document.createElement('div');
+		div.textContent = s;
+		return div.innerHTML;
+	}
+	function escapeAttr(s) {
+		return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+	}
+	if (knowledgeBtn) {
+		knowledgeBtn.addEventListener('click', function () { openKnowledgePanel(); });
+	}
+	document.addEventListener('click', function (e) {
+		if (knowledgePanel && knowledgePanel.style.display === 'block' && !knowledgePanel.contains(e.target) && e.target !== knowledgeBtn) {
+			knowledgePanel.style.display = 'none';
+		}
+	});
 
 	// 僅用於 bot：將 Markdown 轉成安全 HTML（**粗體**、*斜體*、`程式碼`、換行）
 	function renderMarkdown(text) {
@@ -146,6 +206,7 @@
 			fd.append('text', text);
 			fd.append('file', fileToSend);
 			fd.append('web_search', webSearchOn ? 'true' : 'false');
+			if (addToKnowledgeCheck && addToKnowledgeCheck.checked) fd.append('add_to_knowledge', 'true');
 			opts.body = fd;
 		} else {
 			opts.headers = { 'Content-Type': 'application/json' };

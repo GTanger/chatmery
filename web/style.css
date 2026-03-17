@@ -136,6 +136,7 @@ body {
 }
 
 .chat-input-wrap {
+	position: relative;
 	flex-shrink: 0;
 	padding: 0.5rem 0.75rem;
 	padding-bottom: max(1rem, calc(0.5rem + env(safe-area-inset-bottom, 1.5rem)));
@@ -211,6 +212,76 @@ body {
 	color: var(--text-muted);
 	min-height: 1.25em;
 }
+
+.chat-add-knowledge-wrap {
+	margin: 0.25rem 0 0;
+	font-size: 0.75rem;
+	color: var(--text-muted);
+}
+.chat-add-knowledge-wrap label { cursor: pointer; }
+
+.chat-knowledge-link-wrap {
+	margin: 0.25rem 0 0;
+}
+.chat-knowledge-link {
+	background: none;
+	border: none;
+	padding: 0;
+	font-size: 0.75rem;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+.chat-knowledge-link:hover { color: var(--accent); }
+
+.knowledge-panel {
+	position: absolute;
+	bottom: 100%;
+	left: 0.75rem;
+	right: 0.75rem;
+	max-height: 40vh;
+	overflow-y: auto;
+	padding: 0.75rem;
+	background: var(--bg-panel);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.3);
+	z-index: 100;
+}
+.knowledge-sources-list {
+	margin: 0 0 0.5rem;
+	padding-left: 1.25rem;
+	list-style: disc;
+}
+.knowledge-sources-list li {
+	margin: 0.25rem 0;
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+.knowledge-source-name { flex: 1; word-break: break-all; }
+.knowledge-delete-btn {
+	flex-shrink: 0;
+	padding: 0.2rem 0.5rem;
+	font-size: 0.7rem;
+	color: var(--text-muted);
+	background: var(--bg);
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	cursor: pointer;
+}
+.knowledge-delete-btn:hover { color: var(--text); border-color: var(--accent); }
+.knowledge-panel-close {
+	display: block;
+	margin-top: 0.5rem;
+	padding: 0.35rem 0.75rem;
+	font-size: 0.8rem;
+	color: var(--text);
+	background: var(--bg);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	cursor: pointer;
+}
+.knowledge-panel-err, .knowledge-panel-empty { margin: 0 0 0.5rem; font-size: 0.85rem; color: var(--text-muted); }
 
 .chat-input {
 	flex: 1;

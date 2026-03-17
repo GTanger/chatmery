@@ -17,6 +17,7 @@ import (
 
 	"github.com/tanger/chatmery/internal/config"
 	"github.com/tanger/chatmery/internal/document"
+	"github.com/tanger/chatmery/internal/knowledge"
 	"github.com/tanger/chatmery/internal/llm"
 	"github.com/tanger/chatmery/internal/memory"
 	"github.com/tanger/chatmery/internal/search"
@@ -57,6 +58,11 @@ func main() {
 	backstory := memory.NewBackstory(cfg.SoulPath, cfg.MemoryPath)
 	memoryDir := filepath.Dir(cfg.ArchivalPath)
 	tiers := memory.NewTiers(memoryDir, cfg.ShortTermCap, cfg.ShortCondenseTo, cfg.LongTermCap, cfg.LongCondenseTo, cfg.CoreCap, cfg.CoreCondenseTo, cfg.SnippetMaxRunes)
+	var knowledgeStore *knowledge.Store
+	if cfg.KnowledgeEnabled {
+		knowledgeStore = knowledge.NewStore(cfg.KnowledgePath, cfg.KnowledgeChunkRunes, cfg.KnowledgeOverlap, cfg.KnowledgeExpandLinks, cfg.KnowledgeExpandMax)
+		log.Printf("[知識庫] path=%s top_k=%d expand_links=%v", cfg.KnowledgePath, cfg.KnowledgeTopK, cfg.KnowledgeExpandLinks)
+	}
 	var recentMu sync.Mutex
 	var recentTurns []struct{ User, Assistant string }
 	var condenseBuffer []struct{ User, Assistant string }
@@ -165,6 +171,13 @@ func main() {
 				docContext = "## 附檔內容（上傳檔案）\n（以下為使用者上傳檔案的擷取文字，請直接依內容回答。）\n\n" + extracted + "\n\n"
 				if userText == "" {
 					userText = "請根據上述附檔內容回答。"
+				}
+				if knowledgeStore != nil && (r.FormValue("add_to_knowledge") == "true" || r.FormValue("add_to_knowledge") == "1") {
+					if n, err := knowledgeStore.Ingest(extracted, header.Filename); err != nil {
+						log.Printf("[知識庫] ingest %q: %v", header.Filename, err)
+					} else {
+						log.Printf("[知識庫] ingest %q: %d chunks", header.Filename, n)
+					}
 				}
 			} else if userText == "" {
 				http.Error(w, "text or file required", http.StatusBadRequest)
@@ -306,6 +319,18 @@ func main() {
 			memoryContext = "(無)"
 		}
 
+		var knowledgeContext string
+		if cfg.KnowledgeEnabled && knowledgeStore != nil {
+			knowledgeLines := knowledgeStore.Retrieve(userText, cfg.KnowledgeTopK, cfg.SnippetMaxRunes)
+			if len(knowledgeLines) > 0 {
+				knowledgeContext = "## 知識庫（我的閱讀材料）\n" + strings.Join(knowledgeLines, "\n")
+			} else {
+				knowledgeContext = "## 知識庫（我的閱讀材料）\n(無)"
+			}
+		} else {
+			knowledgeContext = ""
+		}
+
 		summary := backstory.GetMemory()
 		zoneName, _ := now.Zone()
 		zoneLine := "時區: " + zoneName
@@ -315,13 +340,16 @@ func main() {
 		timeStr := now.Format("15:04")
 		nowSentence := "本則對話的當前時間：" + naturalDate + " " + strconv.Itoa(hour) + "點" + strconv.Itoa(min) + "分。\n"
 		timeBlock := "## 當前日期與時間\n" + nowSentence + zoneLine + "\n當前日期: " + dateStr + "\n當前時刻: " + timeStr + "（24小時制）\n"
-		abilityBlock := "## 能力邊界\n你可依本則對話、記憶、即時搜尋與上方的「附檔內容」（若有）回答。\n**讀本機檔**：你可以讀取使用者電腦上的檔案。當使用者輸入「讀 路徑」或「讀取 路徑」（例如：讀 /home/xxx/file.pdf），系統會將該檔內容注入「附檔內容」供你回答。若使用者問「你能讀取我電腦的檔案嗎」「看得到我電腦的檔案嗎」等，請明確回答「可以，請輸入「讀」或「讀取」加上本機路徑，例如：讀 /path/to/file」勿回答「不可以」或「沒有此能力」。\n讀網頁、寫檔、搜尋：同上，依系統注入的附檔與即時區塊回答。若問「你能做什麼」請簡短說明讀檔（讀/讀取+路徑）、讀網頁、寫檔、搜尋即可，勿輸出「正在聯網」「正在思考」等語句。回覆要點：僅依「即時」與「附檔內容」區塊回答，沒寫到的不要猜。簡短對談、不列點。若使用者只發「？？」「蛤」「啥」等極短句，簡短確認即可，勿反嗆。"
+		abilityBlock := "## 能力邊界\n你可依本則對話、記憶、即時搜尋、知識庫（我的閱讀材料）與上方的「附檔內容」（若有）回答。\n**讀本機檔**：你可以讀取使用者電腦上的檔案。當使用者輸入「讀 路徑」或「讀取 路徑」（例如：讀 /home/xxx/file.pdf），系統會將該檔內容注入「附檔內容」供你回答。若使用者問「你能讀取我電腦的檔案嗎」「看得到我電腦的檔案嗎」等，請明確回答「可以，請輸入「讀」或「讀取」加上本機路徑，例如：讀 /path/to/file」勿回答「不可以」或「沒有此能力」。\n讀網頁、寫檔、搜尋：同上，依系統注入的附檔與即時區塊回答。若問「你能做什麼」請簡短說明讀檔（讀/讀取+路徑）、讀網頁、寫檔、搜尋即可，勿輸出「正在聯網」「正在思考」等語句。回覆要點：僅依「即時」與「附檔內容」區塊回答，沒寫到的不要猜。簡短對談、不列點。若使用者只發「？？」「蛤」「啥」等極短句，簡短確認即可，勿反嗆。"
 		if cfg.OutputLang != "" {
 			abilityBlock += "\n**輸出語言**：請一律使用「" + cfg.OutputLang + "」回覆。"
 		}
 		systemPrompt := soul + "\n\n" + timeBlock + "## 記憶\n" + memoryContext +
-			"\n\n## 即時\n" + webContext +
-			"\n\n" + docContext +
+			"\n\n## 即時\n" + webContext
+		if knowledgeContext != "" {
+			systemPrompt += "\n\n" + knowledgeContext
+		}
+		systemPrompt += "\n\n" + docContext +
 			"## 背景\n" + summary +
 			"\n\n" + abilityBlock
 
@@ -378,10 +406,108 @@ func main() {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_ = json.NewEncoder(w).Encode(map[string]string{"model": cfg.Model})
 	}
+	handleKnowledgeIngest := func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		if knowledgeStore == nil {
+			http.Error(w, "知識庫未啟用", http.StatusServiceUnavailable)
+			return
+		}
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		var text, source string
+		if file, header, err := r.FormFile("file"); err == nil && header != nil && header.Filename != "" {
+			defer file.Close()
+			ext := filepath.Ext(header.Filename)
+			if ext == "" {
+				ext = ".txt"
+			}
+			tmp, err := os.CreateTemp("", "chatmery-kb-*"+ext)
+			if err != nil {
+				http.Error(w, "無法暫存檔案", http.StatusBadRequest)
+				return
+			}
+			tmpPath := tmp.Name()
+			defer os.Remove(tmpPath)
+			if _, err := io.Copy(tmp, file); err != nil {
+				tmp.Close()
+				http.Error(w, "無法寫入暫存檔", http.StatusBadRequest)
+				return
+			}
+			tmp.Close()
+			text, err = document.ExtractText(tmpPath)
+			if err != nil || text == "" {
+				http.Error(w, "無法擷取檔案文字", http.StatusBadRequest)
+				return
+			}
+			source = header.Filename
+		} else if v := r.FormValue("text"); v != "" {
+			text = strings.TrimSpace(v)
+			source = r.FormValue("source")
+			if source == "" {
+				source = "手貼"
+			}
+		} else if url := r.FormValue("url"); url != "" {
+			url = strings.TrimSpace(url)
+			extracted, err := document.ExtractTextFromURL(url)
+			if err != nil || extracted == "" {
+				http.Error(w, "無法讀取該網頁", http.StatusBadRequest)
+				return
+			}
+			text = extracted
+			source = url
+		} else {
+			http.Error(w, "需要 file、text 或 url", http.StatusBadRequest)
+			return
+		}
+		n, err := knowledgeStore.Ingest(text, source)
+		if err != nil {
+			log.Printf("[知識庫] ingest %q: %v", source, err)
+			http.Error(w, "寫入知識庫失敗", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"source": source, "chunks": n})
+	}
+	handleKnowledgeSources := func(w http.ResponseWriter, r *http.Request) {
+		if knowledgeStore == nil {
+			http.Error(w, "知識庫未啟用", http.StatusServiceUnavailable)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			list := knowledgeStore.ListSources()
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"sources": list})
+		case http.MethodDelete:
+			source := r.URL.Query().Get("source")
+			if source == "" {
+				http.Error(w, "需要 query source=", http.StatusBadRequest)
+				return
+			}
+			if err := knowledgeStore.DeleteBySource(source); err != nil {
+				log.Printf("[知識庫] delete %q: %v", source, err)
+				http.Error(w, "刪除失敗", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			_ = json.NewEncoder(w).Encode(map[string]string{"deleted": source})
+		default:
+			http.Error(w, "GET or DELETE only", http.StatusMethodNotAllowed)
+		}
+	}
 	http.HandleFunc("/chatmery/api/chat", handleChat)
 	http.HandleFunc("/chatmery/api/model", handleModel)
+	http.HandleFunc("/chatmery/api/knowledge/ingest", handleKnowledgeIngest)
+	http.HandleFunc("/chatmery/api/knowledge/sources", handleKnowledgeSources)
 	http.HandleFunc("/api/chat", handleChat)
 	http.HandleFunc("/api/model", handleModel)
+	http.HandleFunc("/api/knowledge/ingest", handleKnowledgeIngest)
+	http.HandleFunc("/api/knowledge/sources", handleKnowledgeSources)
 
 	// 當 Cloudflare Tunnel 依 path 轉發時會剝掉前綴，請求會以 / 送達；根路徑也提供首頁與靜態檔
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

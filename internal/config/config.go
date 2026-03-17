@@ -56,6 +56,14 @@ type Config struct {
 	EmbedModel    string // 模型名（ollama: nomic-embed-text；openai: text-embedding-3-small；gemini: text-embedding-004）；空=關閉
 	EmbedURL      string // Ollama embed URL，預設同 OLLAMA_HOST（僅 EmbedProvider=ollama 時用）
 	EmbedProvider string // ollama（預設）| openai | gemini；openai/gemini 時用對應 API key 與 base URL
+	// 模型知識庫（RAG）：攝入、檢索、可選蒲公英連結擴散
+	KnowledgeEnabled    bool   // 是否啟用知識庫檢索並注入
+	KnowledgePath       string // 知識庫目錄，空則 {workspace}/knowledge
+	KnowledgeTopK       int    // 檢索最多幾條，預設 5
+	KnowledgeChunkRunes int    // 攝入時每段 rune 數，預設 400
+	KnowledgeOverlap    int    // 相鄰段重疊 rune 數，預設 50
+	KnowledgeExpandLinks bool  // 是否沿 [[連結]] 擴散檢索（Obsidian 蒲公英）
+	KnowledgeExpandMax  int    // 擴散最多再加幾條，預設 5
 	// 等候回覆時的 placeholder 文案；多句時每次隨機選一句，空則用內建預設
 	PlaceholderMessages []string
 	// 聊天／串流請求逾時（秒），含讀取 body；預設 300，避免慢模型觸發 context deadline exceeded
@@ -112,6 +120,13 @@ func Load() *Config {
 		EmbedModel:            getEnv("CHATMERY_EMBED_MODEL", ""),
 		EmbedURL:              getEnv("CHATMERY_EMBED_URL", ""),
 		EmbedProvider:         toLower(getEnv("CHATMERY_EMBED_PROVIDER", "ollama")),
+		KnowledgeEnabled:      getEnv("CHATMERY_KNOWLEDGE_ENABLED", "true") == "true" || getEnv("CHATMERY_KNOWLEDGE_ENABLED", "true") == "1",
+		KnowledgePath:         getEnv("CHATMERY_KNOWLEDGE_PATH", ""),
+		KnowledgeTopK:         5,
+		KnowledgeChunkRunes:   400,
+		KnowledgeOverlap:      50,
+		KnowledgeExpandLinks:  getEnv("CHATMERY_KNOWLEDGE_EXPAND_LINKS", "true") == "true" || getEnv("CHATMERY_KNOWLEDGE_EXPAND_LINKS", "true") == "1",
+		KnowledgeExpandMax:    5,
 		PlaceholderMessages:   nil, // 由 tuning/env 填；nil 或空則 main 用內建預設
 		ChatTimeoutSec:        intEnv("CHATMERY_CHAT_TIMEOUT_SEC", 300),
 	}
@@ -119,6 +134,9 @@ func Load() *Config {
 	applyEnvOverrides(cfg)
 	if cfg.Timezone == "" {
 		cfg.Timezone = os.Getenv("TZ")
+	}
+	if cfg.KnowledgePath == "" {
+		cfg.KnowledgePath = filepath.Join(cfg.Workspace, "knowledge")
 	}
 	return cfg
 }
@@ -250,6 +268,28 @@ func applyTuningFile(cfg *Config, path string) {
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {
 				cfg.ChatTimeoutSec = n
 			}
+		case "CHATMERY_KNOWLEDGE_ENABLED":
+			cfg.KnowledgeEnabled = (val == "true" || val == "1" || val == "yes")
+		case "CHATMERY_KNOWLEDGE_PATH":
+			cfg.KnowledgePath = val
+		case "CHATMERY_KNOWLEDGE_TOP_K":
+			if n, err := strconv.Atoi(val); err == nil && n > 0 {
+				cfg.KnowledgeTopK = n
+			}
+		case "CHATMERY_KNOWLEDGE_CHUNK_RUNES":
+			if n, err := strconv.Atoi(val); err == nil && n > 0 {
+				cfg.KnowledgeChunkRunes = n
+			}
+		case "CHATMERY_KNOWLEDGE_OVERLAP":
+			if n, err := strconv.Atoi(val); err == nil && n >= 0 {
+				cfg.KnowledgeOverlap = n
+			}
+		case "CHATMERY_KNOWLEDGE_EXPAND_LINKS":
+			cfg.KnowledgeExpandLinks = (val == "true" || val == "1" || val == "yes")
+		case "CHATMERY_KNOWLEDGE_EXPAND_MAX":
+			if n, err := strconv.Atoi(val); err == nil && n >= 0 {
+				cfg.KnowledgeExpandMax = n
+			}
 		}
 	}
 }
@@ -380,6 +420,27 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("OPENROUTER_BASE_URL"); v != "" {
 		cfg.OpenRouterBaseURL = v
+	}
+	if v, ok := os.LookupEnv("CHATMERY_KNOWLEDGE_ENABLED"); ok {
+		cfg.KnowledgeEnabled = (v == "true" || v == "1" || v == "yes")
+	}
+	if v := os.Getenv("CHATMERY_KNOWLEDGE_PATH"); v != "" {
+		cfg.KnowledgePath = v
+	}
+	if n := intEnv("CHATMERY_KNOWLEDGE_TOP_K", -1); n > 0 {
+		cfg.KnowledgeTopK = n
+	}
+	if n := intEnv("CHATMERY_KNOWLEDGE_CHUNK_RUNES", -1); n > 0 {
+		cfg.KnowledgeChunkRunes = n
+	}
+	if n := intEnv("CHATMERY_KNOWLEDGE_OVERLAP", -1); n >= 0 {
+		cfg.KnowledgeOverlap = n
+	}
+	if v, ok := os.LookupEnv("CHATMERY_KNOWLEDGE_EXPAND_LINKS"); ok {
+		cfg.KnowledgeExpandLinks = (v == "true" || v == "1" || v == "yes")
+	}
+	if n := intEnv("CHATMERY_KNOWLEDGE_EXPAND_MAX", -1); n >= 0 {
+		cfg.KnowledgeExpandMax = n
 	}
 }
 
