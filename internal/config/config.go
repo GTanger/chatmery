@@ -23,10 +23,11 @@ type Config struct {
 	GeminiAPIKey       string // 僅從環境變數讀取
 	OpenRouterBaseURL  string // 例：https://openrouter.ai/api/v1
 	OpenRouterAPIKey   string // 僅從環境變數讀取
-	SearchBackend  string
-	BraveAPIKey    string
-	TavilyAPIKey   string
-	SearchKeywords []string
+	SearchBackend       string
+	BraveAPIKey         string
+	TavilyAPIKey        string
+	UseLLMForSearchQuery bool // true：用 LLM 依使用者句意產出搜尋 query（Cursor 式）；false：用 BuildQuery 關鍵字
+	SearchKeywords      []string
 	// 小模型優化：控制注入量，節省 context、加快回覆
 	MemoryLongTermK   int // 長期記憶最多幾條（答覆時），預設 3
 	MemorySessionK    int // 短期記憶最多幾條（答覆時），預設 5
@@ -50,6 +51,7 @@ type Config struct {
 	RefineBatchMaxItems   int
 	RefineMaxRunesPerItem int
 	Timezone              string // IANA 時區（如 Asia/Taipei），空則用主機當地；對齊 OpenClaw 的 userTimezone
+	OutputLang            string // 回覆一律使用的語言（如「繁體中文」）；留空=不限制，預設 繁體中文
 	// 向量檢索（語意相似）：空則用關鍵字檢索
 	EmbedModel    string // 模型名（ollama: nomic-embed-text；openai: text-embedding-3-small；gemini: text-embedding-004）；空=關閉
 	EmbedURL      string // Ollama embed URL，預設同 OLLAMA_HOST（僅 EmbedProvider=ollama 時用）
@@ -106,6 +108,7 @@ func Load() *Config {
 		RefineBatchMaxItems:   15,
 		RefineMaxRunesPerItem: 120,
 		Timezone:              "",
+		OutputLang:            getEnv("CHATMERY_OUTPUT_LANG", "繁體中文"),
 		EmbedModel:            getEnv("CHATMERY_EMBED_MODEL", ""),
 		EmbedURL:              getEnv("CHATMERY_EMBED_URL", ""),
 		EmbedProvider:         toLower(getEnv("CHATMERY_EMBED_PROVIDER", "ollama")),
@@ -142,6 +145,10 @@ func applyTuningFile(cfg *Config, path string) {
 		if i := strings.Index(val, "#"); i >= 0 {
 			val = strings.TrimSpace(val[:i])
 		}
+		if key == "CHATMERY_OUTPUT_LANG" {
+			cfg.OutputLang = val
+			continue
+		}
 		if val == "" {
 			continue
 		}
@@ -152,6 +159,8 @@ func applyTuningFile(cfg *Config, path string) {
 			cfg.OllamaURL = val
 		case "CHATMERY_SEARCH":
 			cfg.SearchBackend = toLower(val)
+		case "CHATMERY_SEARCH_QUERY_LLM":
+			cfg.UseLLMForSearchQuery = (val == "true" || val == "1" || val == "yes")
 		case "CHATMERY_MEMORY_LONG_K":
 			if n, err := strconv.Atoi(val); err == nil && n >= 0 {
 				cfg.MemoryLongTermK = n
@@ -270,6 +279,9 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("CHATMERY_SEARCH"); v != "" {
 		cfg.SearchBackend = toLower(v)
 	}
+	if v := os.Getenv("CHATMERY_SEARCH_QUERY_LLM"); v != "" {
+		cfg.UseLLMForSearchQuery = (v == "true" || v == "1" || v == "yes")
+	}
 	if n := intEnv("CHATMERY_MEMORY_LONG_K", -1); n >= 0 {
 		cfg.MemoryLongTermK = n
 		cfg.MemoryLongK = n
@@ -323,6 +335,9 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.Timezone = v
 	} else if v := os.Getenv("TZ"); v != "" && cfg.Timezone == "" {
 		cfg.Timezone = v
+	}
+	if v, ok := os.LookupEnv("CHATMERY_OUTPUT_LANG"); ok {
+		cfg.OutputLang = v
 	}
 	if v := os.Getenv("CHATMERY_EMBED_MODEL"); v != "" {
 		cfg.EmbedModel = v

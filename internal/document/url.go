@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jaytaylor/html2text"
+	"github.com/tanger/chatmery/internal/version"
 )
 
 // 回應體上限，避免載入過大頁面
@@ -31,7 +32,7 @@ func ExtractTextFromURL(rawURL string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "Chatmery/1 (read-web)")
+	req.Header.Set("User-Agent", "Chatmery/"+version.Version+" (read-web)")
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err

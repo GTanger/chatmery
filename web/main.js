@@ -23,19 +23,17 @@
 	const fileInput = document.getElementById('chat-file');
 	const fileNameEl = document.getElementById('chat-file-name');
 	const webBtn = document.getElementById('chat-web-btn');
-	const headerModelEl = document.getElementById('chat-header-model');
 
 	var serverWasDown = false;
 	var webSearchOn = false;
+	var currentModel = '';
 
-	if (headerModelEl) {
-		fetch('api/model').then(function (res) {
-			if (!res.ok) return;
-			return res.json();
-		}).then(function (data) {
-			if (data && data.model) headerModelEl.textContent = data.model;
-		}).catch(function () {});
-	}
+	fetch('api/model').then(function (res) {
+		if (!res.ok) return;
+		return res.json();
+	}).then(function (data) {
+		if (data && data.model) currentModel = data.model;
+	}).catch(function () {});
 
 	if (webBtn) {
 		webBtn.addEventListener('click', function () {
@@ -71,16 +69,35 @@
 		});
 	}
 
+	// 僅用於 bot：將 Markdown 轉成安全 HTML（**粗體**、*斜體*、`程式碼`、換行）
+	function renderMarkdown(text) {
+		if (text == null || text === '') return '';
+		var div = document.createElement('div');
+		div.textContent = text;
+		var s = div.innerHTML;
+		s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+		s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
+		s = s.replace(/__(.+?)__/g, '<strong>$1</strong>');
+		s = s.replace(/_(.+?)_/g, '<em>$1</em>');
+		s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+		s = s.replace(/\n/g, '<br>');
+		return s;
+	}
+
 	function appendMessage(role, text, isStreaming) {
 		const wrap = document.createElement('div');
 		wrap.className = 'chat-msg ' + role;
 		const meta = document.createElement('div');
 		meta.className = 'msg-meta';
-		meta.textContent = role === 'user' ? '你' : '阿卅';
+		meta.textContent = role === 'user' ? '你' : (currentModel || '阿卅');
 		wrap.appendChild(meta);
 		const body = document.createElement('div');
-		body.className = 'msg-body';
-		body.textContent = text;
+		body.className = 'msg-body' + (role === 'bot' ? ' msg-body-md' : '');
+		if (role === 'bot') {
+			body.innerHTML = renderMarkdown(text);
+		} else {
+			body.textContent = text;
+		}
 		if (isStreaming) body.setAttribute('aria-busy', 'true');
 		wrap.appendChild(body);
 		messagesEl.appendChild(wrap);
@@ -88,9 +105,13 @@
 		return body;
 	}
 
-	function updateStreamBody(el, text) {
+	function updateStreamBody(el, text, isMarkdown) {
 		if (!el) return;
-		el.textContent = text;
+		if (isMarkdown) {
+			el.innerHTML = renderMarkdown(text);
+		} else {
+			el.textContent = text;
+		}
 		el.removeAttribute('aria-busy');
 		messagesEl.scrollTop = messagesEl.scrollHeight;
 	}
@@ -117,7 +138,7 @@
 		sendBtn.disabled = true;
 		appendMessage('user', displayText, false);
 
-		const streamBody = appendMessage('bot', '…', true);
+		const streamBody = appendMessage('bot', '\u2026', true);
 
 		var opts = { method: 'POST' };
 		if (hasFile) {
@@ -137,11 +158,11 @@
 			if (!res.ok) {
 				serverWasDown = true;
 				return res.text().then(function (t) {
-					updateStreamBody(streamBody, '錯誤：' + (t || res.status));
+					updateStreamBody(streamBody, '錯誤：' + (t || res.status), false);
 				});
 			}
 			if (!res.body) {
-				updateStreamBody(streamBody, '無法取得串流');
+				updateStreamBody(streamBody, '無法取得串流', false);
 				return;
 			}
 			const reader = res.body.getReader();
@@ -150,7 +171,7 @@
 			function read() {
 				reader.read().then(function (r) {
 					if (r.done) {
-						updateStreamBody(streamBody, full || '(無回覆)');
+						updateStreamBody(streamBody, full || '(無回覆)', true);
 						if (serverWasDown) {
 							showRestartNotification();
 							serverWasDown = false;
@@ -168,7 +189,7 @@
 								const j = JSON.parse(data);
 								if (j.text != null) {
 									full += j.text;
-									updateStreamBody(streamBody, full + '…');
+									updateStreamBody(streamBody, full + '\u2026', true);
 								}
 							} catch (_) {}
 						}
@@ -176,13 +197,13 @@
 					read();
 				}).catch(function (err) {
 					serverWasDown = true;
-					updateStreamBody(streamBody, full + '\n\n錯誤：' + err.message);
+					updateStreamBody(streamBody, full + '\n\n錯誤：' + err.message, true);
 				});
 			}
 			read();
 		}).catch(function (err) {
 			serverWasDown = true;
-			updateStreamBody(streamBody, '錯誤：' + err.message);
+			updateStreamBody(streamBody, '錯誤：' + err.message, false);
 		}).finally(function () {
 			sendBtn.disabled = false;
 		});

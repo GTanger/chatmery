@@ -20,6 +20,7 @@ import (
 	"github.com/tanger/chatmery/internal/llm"
 	"github.com/tanger/chatmery/internal/memory"
 	"github.com/tanger/chatmery/internal/search"
+	"github.com/tanger/chatmery/internal/version"
 )
 
 const defaultWebPort = "1721"
@@ -264,12 +265,7 @@ func main() {
 		didSearch := false
 		if webSearchOn || hasSearchIntent(userText, cfg.SearchKeywords) {
 			didSearch = true
-			q := search.BuildQuery(userText)
-			if q != "" {
-				q = dateStr + " " + q
-			} else {
-				q = dateStr
-			}
+			q := buildSearchQuery(cfg, chatProvider, userText, dateStr)
 			for _, r := range searchBackend.Search(q, cfg.WebSearchMaxResults) {
 				webLines = append(webLines, "- [搜尋] "+capRune(r))
 			}
@@ -319,11 +315,15 @@ func main() {
 		timeStr := now.Format("15:04")
 		nowSentence := "本則對話的當前時間：" + naturalDate + " " + strconv.Itoa(hour) + "點" + strconv.Itoa(min) + "分。\n"
 		timeBlock := "## 當前日期與時間\n" + nowSentence + zoneLine + "\n當前日期: " + dateStr + "\n當前時刻: " + timeStr + "（24小時制）\n"
+		abilityBlock := "## 能力邊界\n你可依本則對話、記憶、即時搜尋與上方的「附檔內容」（若有）回答。\n**讀本機檔**：你可以讀取使用者電腦上的檔案。當使用者輸入「讀 路徑」或「讀取 路徑」（例如：讀 /home/xxx/file.pdf），系統會將該檔內容注入「附檔內容」供你回答。若使用者問「你能讀取我電腦的檔案嗎」「看得到我電腦的檔案嗎」等，請明確回答「可以，請輸入「讀」或「讀取」加上本機路徑，例如：讀 /path/to/file」勿回答「不可以」或「沒有此能力」。\n讀網頁、寫檔、搜尋：同上，依系統注入的附檔與即時區塊回答。若問「你能做什麼」請簡短說明讀檔（讀/讀取+路徑）、讀網頁、寫檔、搜尋即可，勿輸出「正在聯網」「正在思考」等語句。回覆要點：僅依「即時」與「附檔內容」區塊回答，沒寫到的不要猜。簡短對談、不列點。若使用者只發「？？」「蛤」「啥」等極短句，簡短確認即可，勿反嗆。"
+		if cfg.OutputLang != "" {
+			abilityBlock += "\n**輸出語言**：請一律使用「" + cfg.OutputLang + "」回覆。"
+		}
 		systemPrompt := soul + "\n\n" + timeBlock + "## 記憶\n" + memoryContext +
 			"\n\n## 即時\n" + webContext +
 			"\n\n" + docContext +
 			"## 背景\n" + summary +
-			"\n\n## 能力邊界\n你可依本則對話、記憶、即時搜尋與上方的「附檔內容」（若有）回答。\n**讀本機檔**：你可以讀取使用者電腦上的檔案。當使用者輸入「讀 路徑」或「讀取 路徑」（例如：讀 /home/xxx/file.pdf），系統會將該檔內容注入「附檔內容」供你回答。若使用者問「你能讀取我電腦的檔案嗎」「看得到我電腦的檔案嗎」等，請明確回答「可以，請輸入「讀」或「讀取」加上本機路徑，例如：讀 /path/to/file」勿回答「不可以」或「沒有此能力」。\n讀網頁、寫檔、搜尋：同上，依系統注入的附檔與即時區塊回答。若問「你能做什麼」請簡短說明讀檔（讀/讀取+路徑）、讀網頁、寫檔、搜尋即可，勿輸出「正在聯網」「正在思考」等語句。回覆要點：僅依「即時」與「附檔內容」區塊回答，沒寫到的不要猜。簡短對談、不列點。若使用者只發「？？」「蛤」「啥」等極短句，簡短確認即可，勿反嗆。"
+			"\n\n" + abilityBlock
 
 		recentMu.Lock()
 		turns := make([]struct{ User, Assistant string }, len(recentTurns))
@@ -402,7 +402,7 @@ func main() {
 	if port == "" {
 		port = defaultWebPort
 	}
-	log.Printf("Chatmery Web 已啟動（系統重啟），監聽 :%s (base path /chatmery)", port)
+	log.Printf("Chatmery Web %s 已啟動（系統重啟），監聽 :%s (base path /chatmery)", version.Version, port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatalf("listen: %v", err)
 	}
@@ -444,6 +444,38 @@ func appendConversationLog(memoryDir, user, assistant string) {
 	}
 	_, _ = f.Write(append(b, '\n'))
 	f.Close()
+}
+
+// buildSearchQuery 產出網搜用的 query。若 cfg.UseLLMForSearchQuery 且 chatProvider 非 nil，
+// 用 LLM 依使用者句意產出單行查詢（Cursor 式）；否則用 BuildQuery + 日期。
+func buildSearchQuery(cfg *config.Config, chatProvider llm.Provider, userText, dateStr string) string {
+	if cfg.UseLLMForSearchQuery && chatProvider != nil {
+		msgs := []llm.Message{
+			{Role: "system", Content: search.SearchQuerySystemPrompt},
+			{Role: "user", Content: search.QueryGenUserPrompt(userText, dateStr)},
+		}
+		full, err := chatProvider.ChatStream(msgs, func(string) {})
+		if err == nil && full != "" {
+			q := strings.TrimSpace(full)
+			if idx := strings.Index(q, "\n"); idx >= 0 {
+				q = strings.TrimSpace(q[:idx])
+			}
+			const maxQueryRunes = 120
+			if utf8.RuneCountInString(q) > maxQueryRunes {
+				runes := []rune(q)
+				q = string(runes[:maxQueryRunes])
+			}
+			if q != "" {
+				log.Printf("[網搜] LLM query: %s", q)
+				return q
+			}
+		}
+	}
+	q := search.BuildQuery(userText)
+	if q != "" {
+		return dateStr + " " + q
+	}
+	return dateStr
 }
 
 func hasSearchIntent(text string, keywords []string) bool {
