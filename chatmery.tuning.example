@@ -2,7 +2,7 @@
 # cp chatmery.tuning.example chatmery.tuning
 
 # 模型與聊天後端（API key 一律放在 .env，此檔只寫設定）
-CHATMERY_MODEL=qwen-4b-slim:latest   # 模型名稱（ollama 本機；openai 如 gpt-4o-mini；gemini 如 gemini-2.5-flash；openrouter 如 google/gemini-2.0-flash）
+CHATMERY_MODEL=gemma3:4b             # 模型名稱（ollama 本機，3.3GB/131K/吐字快；可改 mistral-nemo:12b、qwen-4b-slim 等）
 OLLAMA_HOST=http://localhost:11434   # Ollama 服務網址（provider=ollama 時用）
 CHATMERY_PROVIDER=ollama             # 聊天後端：ollama | openai | gemini | openrouter（後三者需在 .env 設對應 API key）
 # OPENAI_BASE_URL=https://api.openai.com/v1   # 選填；openai 時預設為此

@@ -74,7 +74,7 @@ func Load() *Config {
 		SoulPath:              filepath.Join(workspace, "SOUL.md"),
 		MemoryPath:            filepath.Join(workspace, "MEMORY.md"),
 		ArchivalPath:          filepath.Join(workspace, "memory", "archival.jsonl"),
-		Model:                 getEnv("CHATMERY_MODEL", "qwen-4b-slim:latest"),
+		Model:                 getEnv("CHATMERY_MODEL", "gemma3:4b"),
 		OllamaURL:             getEnv("OLLAMA_HOST", "http://localhost:11434"),
 		Provider:              toLower(getEnv("CHATMERY_PROVIDER", "ollama")),
 		OpenAIBaseURL:         getEnv("OPENAI_BASE_URL", "https://api.openai.com/v1"),

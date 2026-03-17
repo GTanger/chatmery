@@ -323,7 +323,7 @@ func main() {
 			"\n\n## 即時\n" + webContext +
 			"\n\n" + docContext +
 			"## 背景\n" + summary +
-			"\n\n## 能力邊界\n你可依本則對話、記憶、即時搜尋與上方的「附檔內容」（若有）回答。若使用者問「你能做什麼」等，請簡短說明讀檔、讀網頁、寫檔、搜尋能力即可，勿輸出「正在聯網」「正在思考」等語句。回覆要點：僅依「即時」與「附檔內容」區塊回答，沒寫到的不要猜。簡短對談、不列點。若使用者只發「？？」「蛤」「啥」等極短句，簡短確認即可，勿反嗆。"
+			"\n\n## 能力邊界\n你可依本則對話、記憶、即時搜尋與上方的「附檔內容」（若有）回答。\n**讀本機檔**：你可以讀取使用者電腦上的檔案。當使用者輸入「讀 路徑」或「讀取 路徑」（例如：讀 /home/xxx/file.pdf），系統會將該檔內容注入「附檔內容」供你回答。若使用者問「你能讀取我電腦的檔案嗎」「看得到我電腦的檔案嗎」等，請明確回答「可以，請輸入「讀」或「讀取」加上本機路徑，例如：讀 /path/to/file」勿回答「不可以」或「沒有此能力」。\n讀網頁、寫檔、搜尋：同上，依系統注入的附檔與即時區塊回答。若問「你能做什麼」請簡短說明讀檔（讀/讀取+路徑）、讀網頁、寫檔、搜尋即可，勿輸出「正在聯網」「正在思考」等語句。回覆要點：僅依「即時」與「附檔內容」區塊回答，沒寫到的不要猜。簡短對談、不列點。若使用者只發「？？」「蛤」「啥」等極短句，簡短確認即可，勿反嗆。"
 
 		recentMu.Lock()
 		turns := make([]struct{ User, Assistant string }, len(recentTurns))
@@ -365,6 +365,7 @@ func main() {
 			condenseBuffer = nil
 		}
 		recentMu.Unlock()
+		appendConversationLog(memoryDir, userText, fullResponse)
 		if len(toCondense) == condenseRounds {
 			go condense20RoundsAndPush(cfg, chatProvider, toCondense, tiers, backstory)
 		}
@@ -421,6 +422,28 @@ func writeSSEText(w http.ResponseWriter, text string) {
 
 func writeSSEErr(w http.ResponseWriter, errMsg string) {
 	writeSSEText(w, "錯誤："+errMsg)
+}
+
+func appendConversationLog(memoryDir, user, assistant string) {
+	path := filepath.Join(memoryDir, "conversation.jsonl")
+	entry := struct {
+		User      string `json:"user"`
+		Assistant string `json:"assistant"`
+		Ts        string `json:"ts"`
+	}{User: user, Assistant: assistant, Ts: time.Now().UTC().Format(time.RFC3339)}
+	b, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(memoryDir, 0755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return
+	}
+	_, _ = f.Write(append(b, '\n'))
+	f.Close()
 }
 
 func hasSearchIntent(text string, keywords []string) bool {
