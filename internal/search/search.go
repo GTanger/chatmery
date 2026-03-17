@@ -16,8 +16,15 @@ type Backend struct {
 	TavilyAPIKey string
 }
 
-// Search 執行搜尋，回傳最多 maxResults 條摘要字串。
-func (b *Backend) Search(query string, maxResults int) []string {
+// Result 單筆搜尋結果，供注入 prompt 與附上引用連結。
+type Result struct {
+	Title   string
+	URL     string
+	Content string
+}
+
+// Search 執行搜尋，回傳最多 maxResults 條結果（含標題、URL、摘要）。
+func (b *Backend) Search(query string, maxResults int) []Result {
 	if maxResults <= 0 {
 		maxResults = 5
 	}
@@ -36,7 +43,7 @@ func (b *Backend) Search(query string, maxResults int) []string {
 	}
 }
 
-func (b *Backend) brave(query string, count int) []string {
+func (b *Backend) brave(query string, count int) []Result {
 	if b.BraveAPIKey == "" {
 		log.Println("[search] BRAVE_API_KEY not set")
 		return nil
@@ -62,8 +69,9 @@ func (b *Backend) brave(query string, count int) []string {
 	var data struct {
 		Web struct {
 			Results []struct {
-				Description string `json:"description"`
 				Title       string `json:"title"`
+				URL         string `json:"url"`
+				Description string `json:"description"`
 			} `json:"results"`
 		} `json:"web"`
 	}
@@ -71,23 +79,23 @@ func (b *Backend) brave(query string, count int) []string {
 		log.Printf("[search] brave decode: %v", err)
 		return nil
 	}
-	var out []string
+	var out []Result
 	for i, r := range data.Web.Results {
 		if i >= count {
 			break
 		}
-		text := r.Description
-		if text == "" {
-			text = r.Title
+		content := r.Description
+		if content == "" {
+			content = r.Title
 		}
-		if text != "" {
-			out = append(out, text)
+		if content != "" || r.URL != "" {
+			out = append(out, Result{Title: r.Title, URL: r.URL, Content: content})
 		}
 	}
 	return out
 }
 
-func (b *Backend) tavily(query string, maxResults int) []string {
+func (b *Backend) tavily(query string, maxResults int) []Result {
 	if b.TavilyAPIKey == "" {
 		log.Println("[search] TAVILY_API_KEY not set")
 		return nil
@@ -118,25 +126,26 @@ func (b *Backend) tavily(query string, maxResults int) []string {
 	}
 	var data struct {
 		Results []struct {
-			Content string `json:"content"`
 			Title   string `json:"title"`
+			URL     string `json:"url"`
+			Content string `json:"content"`
 		} `json:"results"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		log.Printf("[search] tavily decode: %v", err)
 		return nil
 	}
-	var out []string
+	var out []Result
 	for i, r := range data.Results {
 		if i >= maxResults {
 			break
 		}
-		text := r.Content
-		if text == "" {
-			text = r.Title
+		content := r.Content
+		if content == "" {
+			content = r.Title
 		}
-		if text != "" {
-			out = append(out, text)
+		if content != "" || r.URL != "" {
+			out = append(out, Result{Title: r.Title, URL: r.URL, Content: content})
 		}
 	}
 	return out

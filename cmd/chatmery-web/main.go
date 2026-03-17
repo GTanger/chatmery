@@ -275,12 +275,16 @@ func main() {
 		}
 
 		var webLines []string
+		var webSources []struct{ Title, URL string }
 		didSearch := false
 		if webSearchOn || hasSearchIntent(userText, cfg.SearchKeywords) {
 			didSearch = true
 			q := buildSearchQuery(cfg, chatProvider, userText, dateStr)
 			for _, r := range searchBackend.Search(q, cfg.WebSearchMaxResults) {
-				webLines = append(webLines, "- [搜尋] "+capRune(r))
+				webLines = append(webLines, "- [搜尋] "+capRune(r.Content))
+				if r.URL != "" {
+					webSources = append(webSources, struct{ Title, URL string }{Title: r.Title, URL: r.URL})
+				}
 			}
 		}
 		var webContext string
@@ -340,7 +344,7 @@ func main() {
 		timeStr := now.Format("15:04")
 		nowSentence := "本則對話的當前時間：" + naturalDate + " " + strconv.Itoa(hour) + "點" + strconv.Itoa(min) + "分。\n"
 		timeBlock := "## 當前日期與時間\n" + nowSentence + zoneLine + "\n當前日期: " + dateStr + "\n當前時刻: " + timeStr + "（24小時制）\n"
-		abilityBlock := "## 能力邊界\n你可依本則對話、記憶、即時搜尋、知識庫（我的閱讀材料）與上方的「附檔內容」（若有）回答。\n**讀本機檔**：你可以讀取使用者電腦上的檔案。當使用者輸入「讀 路徑」或「讀取 路徑」（例如：讀 /home/xxx/file.pdf），系統會將該檔內容注入「附檔內容」供你回答。若使用者問「你能讀取我電腦的檔案嗎」「看得到我電腦的檔案嗎」等，請明確回答「可以，請輸入「讀」或「讀取」加上本機路徑，例如：讀 /path/to/file」勿回答「不可以」或「沒有此能力」。\n讀網頁、寫檔、搜尋：同上，依系統注入的附檔與即時區塊回答。若問「你能做什麼」請簡短說明讀檔（讀/讀取+路徑）、讀網頁、寫檔、搜尋即可，勿輸出「正在聯網」「正在思考」等語句。回覆要點：僅依「即時」與「附檔內容」區塊回答，沒寫到的不要猜。簡短對談、不列點。若使用者只發「？？」「蛤」「啥」等極短句，簡短確認即可，勿反嗆。"
+		abilityBlock := "## 能力邊界\n你可依本則對話、記憶、即時搜尋、知識庫（我的閱讀材料）與上方的「附檔內容」（若有）回答。若有「即時」搜尋結果，請僅依該區塊內容作答；文末引用來源將由系統自動附上，勿編造或猜測連結。\n**讀本機檔**：你可以讀取使用者電腦上的檔案。當使用者輸入「讀 路徑」或「讀取 路徑」（例如：讀 /home/xxx/file.pdf），系統會將該檔內容注入「附檔內容」供你回答。若使用者問「你能讀取我電腦的檔案嗎」「看得到我電腦的檔案嗎」等，請明確回答「可以，請輸入「讀」或「讀取」加上本機路徑，例如：讀 /path/to/file」勿回答「不可以」或「沒有此能力」。\n讀網頁、寫檔、搜尋：同上，依系統注入的附檔與即時區塊回答。若問「你能做什麼」請簡短說明讀檔（讀/讀取+路徑）、讀網頁、寫檔、搜尋即可，勿輸出「正在聯網」「正在思考」等語句。回覆要點：僅依「即時」與「附檔內容」區塊回答，沒寫到的不要猜。簡短對談、不列點。若使用者只發「？？」「蛤」「啥」等極短句，簡短確認即可，勿反嗆。"
 		if cfg.OutputLang != "" {
 			abilityBlock += "\n**輸出語言**：請一律使用「" + cfg.OutputLang + "」回覆。"
 		}
@@ -377,6 +381,14 @@ func main() {
 		if fullResponse == "" && cfg.Provider == "gemini" {
 			writeSSEErr(w, "Gemini 回傳空內容，請換一則訊息或改用其他模型。")
 			return
+		}
+		if len(webSources) > 0 {
+			sourcesPayload := make([]map[string]string, 0, len(webSources))
+			for _, s := range webSources {
+				sourcesPayload = append(sourcesPayload, map[string]string{"title": s.Title, "url": s.URL})
+			}
+			sourcesJSON, _ := json.Marshal(map[string]interface{}{"sources": sourcesPayload})
+			writeSSE(w, "data: "+string(sourcesJSON)+"\n\n")
 		}
 		writeSSE(w, "data: [DONE]\n\n")
 		recentMu.Lock()

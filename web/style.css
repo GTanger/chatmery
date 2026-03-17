@@ -135,6 +135,30 @@ body {
 	margin-top: 0.25em;
 }
 
+/* 網搜引用來源（每則訊息下方，新視窗開啟） */
+.msg-sources {
+	margin-top: 0.5rem;
+	padding-top: 0.5rem;
+	border-top: 1px solid var(--border);
+	font-size: 0.8rem;
+}
+.msg-sources-title {
+	margin: 0 0 0.25rem;
+	color: var(--text-muted);
+	font-weight: 600;
+}
+.msg-sources-list {
+	margin: 0;
+	padding-left: 1.25rem;
+	list-style: disc;
+}
+.msg-sources-list a {
+	color: var(--accent);
+	text-decoration: none;
+	word-break: break-all;
+}
+.msg-sources-list a:hover { text-decoration: underline; }
+
 .chat-input-wrap {
 	position: relative;
 	flex-shrink: 0;

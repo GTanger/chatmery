@@ -229,10 +229,37 @@
 			const reader = res.body.getReader();
 			const decoder = new TextDecoder();
 			let full = '';
+			var streamSources = null;
 			function read() {
 				reader.read().then(function (r) {
 					if (r.done) {
 						updateStreamBody(streamBody, full || '(無回覆)', true);
+						if (streamSources && streamSources.length && streamBody && streamBody.parentNode) {
+							var wrap = streamBody.parentNode;
+							var div = document.createElement('div');
+							div.className = 'msg-sources';
+							div.setAttribute('role', 'complementary');
+							var heading = document.createElement('p');
+							heading.className = 'msg-sources-title';
+							heading.textContent = '引用來源';
+							div.appendChild(heading);
+							var ul = document.createElement('ul');
+							ul.className = 'msg-sources-list';
+							for (var si = 0; si < streamSources.length; si++) {
+								var s = streamSources[si];
+								var li = document.createElement('li');
+								var a = document.createElement('a');
+								a.href = s.url || '#';
+								a.target = '_blank';
+								a.rel = 'noopener noreferrer';
+								a.textContent = (s.title && s.title.trim()) ? s.title : s.url;
+								a.title = s.url;
+								li.appendChild(a);
+								ul.appendChild(li);
+							}
+							div.appendChild(ul);
+							wrap.appendChild(div);
+						}
 						if (serverWasDown) {
 							showRestartNotification();
 							serverWasDown = false;
@@ -248,7 +275,9 @@
 							if (data === '[DONE]') continue;
 							try {
 								const j = JSON.parse(data);
-								if (j.text != null) {
+								if (j.sources != null && Array.isArray(j.sources)) {
+									streamSources = j.sources;
+								} else if (j.text != null) {
 									full += j.text;
 									updateStreamBody(streamBody, full + '\u2026', true);
 								}

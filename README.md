@@ -3,15 +3,16 @@
 專案名 = **chat** + **memory** 合併（非「聊天室」；若丟 Google 翻譯會誤翻成聊天室，此為自造專案名）。  
 對話外殼（Web）+ 記憶系統（背版 + archival），Go 實作。**預設專為小模型設計（約 4B 參數等級）**：輕量、迅速、不過度消耗 context，適合本地 4B 左右模型日常對談。記憶不靠「MD 對話紀錄 + 硬式檢索」（那樣使用者會等了又等），改為「抽出的要旨 → 少數條目注入」；可獨立運行，之後可接回遊戲或給 OpenClaw 當記憶後端。
 
-**對話殼優先級**：上網檢索的能力與精準度最重要（模型知識截止於訓練日，必須能查新訊息）；其次為寫文檔、紀錄討論。見 [對話殼—OpenClaw 讀寫本地檔案與文檔](doc/對話殼—OpenClaw%20讀寫本地檔案與文檔.md)。
+**對話殼優先級**：上網檢索的能力與精準度最重要（模型知識截止於訓練日，必須能查新訊息）；網搜結果會附**引用來源**（每則訊息下方可點連結開新視窗）。其次為寫文檔、紀錄討論、模型知識庫（RAG）。見 [對話殼—OpenClaw 讀寫本地檔案與文檔](doc/對話殼—OpenClaw%20讀寫本地檔案與文檔.md)。近期更新見 [更新紀錄](doc/更新紀錄.md)。
 
 ## 架構
 
-- **internal/config** — 環境變數與路徑（WORKSPACE、搜尋後端、模型與 API、四池容量與答覆注入量）
+- **internal/config** — 環境變數與路徑（WORKSPACE、搜尋／知識庫／模型與 API、四池容量與答覆注入量）
 - **internal/memory** — 背版（SOUL.md、MEMORY.md）、四池一魂（短期／長期／核心／當前 + 靈魂）、關鍵字檢索與持久化（見 [記憶階層—四池一魂](doc/記憶階層—四池一魂提案.md)）
-- **internal/search** — 搜尋關鍵字萃取、Brave / Tavily API（Go 版未實作 DuckDuckGo）
+- **internal/search** — 網搜 query 萃取（可選 LLM 產出）、Brave / Tavily API，回傳 Result（Title、URL、Content）供引用
+- **internal/knowledge** — 模型知識庫（RAG）：chunk 攝入、關鍵字／連結擴散檢索、chunks.jsonl 儲存
 - **internal/ollama** — Ollama chat 串流與 generate
-- **cmd/chatmery-web** — Web 殼入口：近期對話上下文（最近 10 輪）、組 prompt（靈魂 + 時間 + 記憶 + 即時 + 附檔 + 背景）、呼叫記憶與搜尋、提供 /chatmery 靜態與 API（SSE）
+- **cmd/chatmery-web** — Web 殼入口：近期對話、prompt（靈魂 + 時間 + 記憶 + 即時 + 知識庫 + 附檔 + 背景）、網搜引用來源、/chatmery 靜態與 API（SSE）
 
 ## 敏感資訊：獨檔管理、不寫進程式碼
 
@@ -41,6 +42,9 @@ cp chatmery.tuning.example chatmery.tuning
 | `GEMINI_BASE_URL` | Gemini 端點（provider=gemini 時）；若 404 請改用 [Gemini 模型文件](https://ai.google.dev/gemini-api/docs/models/gemini) 所列型號 |
 | `OPENROUTER_BASE_URL` | OpenRouter 端點（provider=openrouter 時；預設 `https://openrouter.ai/api/v1`） |
 | `CHATMERY_SEARCH` | 網搜後端：`brave` 或 `tavily` |
+| `CHATMERY_SEARCH_QUERY_LLM` | `true` 時以 LLM 依句意產出搜尋 query（Cursor 式）；預設 `true` |
+| `CHATMERY_OUTPUT_LANG` | 回覆一律使用的語言（如「繁體中文」）；留空不限制，預設 繁體中文 |
+| `CHATMERY_KNOWLEDGE_ENABLED` / `CHATMERY_KNOWLEDGE_PATH` / `CHATMERY_KNOWLEDGE_TOP_K` 等 | 模型知識庫（RAG）；見 chatmery.tuning.example 與 [模型知識庫—設計提案](doc/模型知識庫—設計提案.md) |
 | `CHATMERY_MEMORY_LONG_K` / `CHATMERY_MEMORY_SESSION_K` / `CHATMERY_MEMORY_CORE_K` / `CHATMERY_WEB_SEARCH_MAX` / `CHATMERY_SNIPPET_MAX` | 答覆時記憶注入量（結構：當前1+靈魂1+核心2+長期3+短期5） |
 | `CHATMERY_SHORT_TERM_CAP` / `CHATMERY_SHORT_CONDENSE_TO` 等 | 四池容量與濃縮條數（見 chatmery.tuning 註解） |
 | `CHATMERY_EMBED_MODEL` / `CHATMERY_EMBED_PROVIDER` / `CHATMERY_EMBED_URL` | 向量檢索（目前四池為關鍵字檢索；可擴充） |
@@ -54,7 +58,7 @@ Workspace 下需有 **SOUL.md**（可選，無則用預設）、**MEMORY.md**（
 
 - 保持 **SOUL.md**、**MEMORY.md** 簡短（各約數十字～百字），避免塞滿 context。
 - 預設注入量針對 4B 左右模型（長期 3、短期 5、核心 2、網搜 5、每條最多 120 字）；更大模型可調大上述環境變數。
-- 預設模型為 `qwen-4b-slim:latest`；Ollama 端可設較小 `num_ctx`（如 2048）以加快推理。
+- 預設模型為 `gemma3:4b`（131K、吐字快）；Ollama 端可設較小 `num_ctx`（如 2048）以加快推理。
 
 ## 一鍵上線（Web 殼）
 
@@ -102,7 +106,9 @@ go build -o chatmery-web ./cmd/chatmery-web
 
 設計與彙整文件在 `doc/`：
 
+- [更新紀錄](doc/更新紀錄.md)（版次 1.2.0～1.3.1：Cursor 式網搜、輸出語言、Markdown、知識庫、引用來源）
 - [專案進度](doc/專案進度.md)（已完成／未完成／模組一覽）
+- [模型知識庫—設計提案](doc/模型知識庫—設計提案.md)（RAG、Obsidian 蒲公英連結、API 與前端）
 - [記憶階層—四池一魂提案](doc/記憶階層—四池一魂提案.md)（當前→短期→長期→核心→靈魂；濃縮與歸零；答覆結構 1+1+2+3+5）
 - [記憶模式—設計對齊](doc/記憶模式—設計對齊.md)（短期每條入池、檢索與觸發對齊）
 - [記憶流程—概念定稿](doc/記憶流程—概念定稿.md)（概念背景）
