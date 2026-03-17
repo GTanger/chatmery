@@ -68,6 +68,12 @@ type Config struct {
 	PlaceholderMessages []string
 	// 聊天／串流請求逾時（秒），含讀取 body；預設 300，避免慢模型觸發 context deadline exceeded
 	ChatTimeoutSec int
+	// 近期對話輪次上限（送進模型的 user+assistant 輪數）；預設 20，可由 CHATMERY_RECENT_TURNS 覆寫
+	RecentTurns int
+	// 是否自動解構進短期（每 20 輪濃縮 1 句進短期）；false 則不執行
+	MemoryAutoShort bool
+	// 是否自動濃縮進長期（短期滿時濃縮進長期→核心→靈魂）；false 則僅寫入短期、不觸發長鏈
+	MemoryAutoLong bool
 }
 
 func Load() *Config {
@@ -129,14 +135,21 @@ func Load() *Config {
 		KnowledgeExpandMax:    5,
 		PlaceholderMessages:   nil, // 由 tuning/env 填；nil 或空則 main 用內建預設
 		ChatTimeoutSec:        intEnv("CHATMERY_CHAT_TIMEOUT_SEC", 300),
+		RecentTurns:           20,
+		MemoryAutoShort:       true,
+		MemoryAutoLong:        true,
 	}
 	applyTuningFile(cfg, filepath.Join(workspace, "chatmery.tuning"))
 	applyEnvOverrides(cfg)
+	cfg.RecentTurns = clampInt(cfg.RecentTurns, 1, 100)
 	if cfg.Timezone == "" {
 		cfg.Timezone = os.Getenv("TZ")
 	}
 	if cfg.KnowledgePath == "" {
 		cfg.KnowledgePath = filepath.Join(cfg.Workspace, "knowledge")
+	}
+	if abs, err := filepath.Abs(cfg.KnowledgePath); err == nil {
+		cfg.KnowledgePath = abs
 	}
 	return cfg
 }
@@ -290,6 +303,14 @@ func applyTuningFile(cfg *Config, path string) {
 			if n, err := strconv.Atoi(val); err == nil && n >= 0 {
 				cfg.KnowledgeExpandMax = n
 			}
+		case "CHATMERY_RECENT_TURNS":
+			if n, err := strconv.Atoi(val); err == nil && n >= 1 {
+				cfg.RecentTurns = n
+			}
+		case "CHATMERY_MEMORY_AUTO_SHORT":
+			cfg.MemoryAutoShort = (val == "true" || val == "1" || val == "yes")
+		case "CHATMERY_MEMORY_AUTO_LONG":
+			cfg.MemoryAutoLong = (val == "true" || val == "1" || val == "yes")
 		}
 	}
 }
@@ -378,6 +399,15 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v, ok := os.LookupEnv("CHATMERY_OUTPUT_LANG"); ok {
 		cfg.OutputLang = v
+	}
+	if n := intEnv("CHATMERY_RECENT_TURNS", -1); n >= 1 {
+		cfg.RecentTurns = n
+	}
+	if v := os.Getenv("CHATMERY_MEMORY_AUTO_SHORT"); v != "" {
+		cfg.MemoryAutoShort = (v == "true" || v == "1" || v == "yes")
+	}
+	if v := os.Getenv("CHATMERY_MEMORY_AUTO_LONG"); v != "" {
+		cfg.MemoryAutoLong = (v == "true" || v == "1" || v == "yes")
 	}
 	if v := os.Getenv("CHATMERY_EMBED_MODEL"); v != "" {
 		cfg.EmbedModel = v
@@ -470,4 +500,14 @@ func toLower(s string) string {
 		b[i] = c
 	}
 	return string(b)
+}
+
+func clampInt(n, min, max int) int {
+	if n < min {
+		return min
+	}
+	if n > max {
+		return max
+	}
+	return n
 }

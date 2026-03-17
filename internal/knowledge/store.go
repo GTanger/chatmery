@@ -3,6 +3,8 @@ package knowledge
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -33,6 +35,7 @@ type Store struct {
 }
 
 // NewStore 建立知識庫；dir 為 knowledge 目錄，chunkRunes/overlap 為切段參數，expandLinks/expandMax 為蒲公英擴散選項。
+// 若 dir 為空，會改用當前工作目錄下的 knowledge，避免 API 回傳空路徑。
 func NewStore(dir string, chunkRunes, overlap int, expandLinks bool, expandMax int) *Store {
 	if chunkRunes <= 0 {
 		chunkRunes = 400
@@ -42,6 +45,16 @@ func NewStore(dir string, chunkRunes, overlap int, expandLinks bool, expandMax i
 	}
 	if expandMax <= 0 {
 		expandMax = 5
+	}
+	if dir == "" {
+		if wd, err := os.Getwd(); err == nil && wd != "" {
+			dir = filepath.Join(wd, "knowledge")
+		} else if exe, err := os.Executable(); err == nil {
+			dir = filepath.Join(filepath.Dir(exe), "knowledge")
+		}
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
 	}
 	s := &Store{
 		dir:         dir,
@@ -55,6 +68,57 @@ func NewStore(dir string, chunkRunes, overlap int, expandLinks bool, expandMax i
 }
 
 func (s *Store) chunksPath() string { return filepath.Join(s.dir, "chunks.jsonl") }
+func (s *Store) summaryPath() string { return filepath.Join(s.dir, "summary.md") }
+func (s *Store) archivesDir() string { return filepath.Join(s.dir, "archives") }
+
+// Path 回傳知識庫目錄的絕對路徑（儲存位置），供 log 或 API 顯示。
+func (s *Store) Path() string { return s.dir }
+
+// Summary 讀取 summary.md，若不存在或為空則回傳空字串（不報錯）。
+func (s *Store) Summary() string {
+	b, err := os.ReadFile(s.summaryPath())
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// appendSummary 在 summary.md 尾端追加一筆「來源 + 日期 + 摘要片段」；不持鎖，僅寫檔。
+func (s *Store) appendSummary(source, snippet string) {
+	if snippet == "" {
+		snippet = source
+	}
+	if err := os.MkdirAll(s.dir, 0755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(s.summaryPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = fmt.Fprintf(f, "## [%s] %s\n\n%s\n\n", source, time.Now().Format("2006-01-02"), snippet)
+}
+
+// writeArchive 在 knowledge/archives/ 寫入一筆 YYYYMMDD_sanitized.md，內容為來源與片段；不持鎖。
+func (s *Store) writeArchive(source, content string) {
+	archives := s.archivesDir()
+	if err := os.MkdirAll(archives, 0755); err != nil {
+		return
+	}
+	sanitized := strings.ReplaceAll(source, "/", "-")
+	sanitized = strings.ReplaceAll(sanitized, " ", "_")
+	sanitized = strings.ReplaceAll(sanitized, ":", "-")
+	sanitized = CapRunes(sanitized, 80)
+	date := time.Now().Format("20060102")
+	name := date + "_" + sanitized + ".md"
+	if name == date+"_.md" {
+		name = date + "_ingest.md"
+	}
+	fpath := filepath.Join(archives, name)
+	snippet := CapRunes(content, 500)
+	body := fmt.Sprintf("# %s\n\n**來源**: %s\n**日期**: %s\n\n%s\n", source, source, time.Now().Format(time.RFC3339), snippet)
+	_ = os.WriteFile(fpath, []byte(body), 0644)
+}
 
 // Load 從 chunks.jsonl 載入。
 func (s *Store) Load() error {
@@ -133,11 +197,36 @@ func (s *Store) Ingest(text, source string) (int, error) {
 		})
 	}
 	s.mu.Unlock()
-	return len(segments), s.Save()
+	if err := s.Save(); err != nil {
+		return len(segments), err
+	}
+	s.appendSummary(source, CapRunes(text, 300))
+	s.writeArchive(source, text)
+	return len(segments), nil
 }
 
-// Retrieve 依 query 關鍵字檢索 topK 條，每條截斷為 snippetMax rune，並可選沿連結擴散。
-// 回傳字串格式為 "- [來源] 內容"，供直接注入 prompt。
+// temporalDecay 依 CreatedAt 計算時間衰減係數：decay = exp(-ln(2)/halfLifeDays * ageDays)。
+func temporalDecay(createdAt string, halfLifeDays float64) float64 {
+	if createdAt == "" {
+		return 1.0
+	}
+	t, err := time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		return 1.0
+	}
+	days := time.Since(t).Hours() / 24
+	if days <= 0 {
+		return 1.0
+	}
+	decay := math.Exp(-math.Ln2 / halfLifeDays * days)
+	if decay < 0.01 {
+		return 0.01
+	}
+	return decay
+}
+
+// Retrieve 依 query 關鍵字檢索 topK 條，每條截斷為 snippetMax rune，並可選沿連結擴散；分數乘時間衰減（半衰期 30 天）。
+// 回傳字串格式為 "- [來源] 內容"，供直接注入 prompt。無 chunk 或全部分數為 0 時回傳 nil，不報錯。
 func (s *Store) Retrieve(query string, topK, snippetMax int) []string {
 	s.mu.Lock()
 	chunks := make([]Chunk, len(s.chunks))
@@ -149,19 +238,22 @@ func (s *Store) Retrieve(query string, topK, snippetMax int) []string {
 		return nil
 	}
 	qw := strings.Fields(strings.ToLower(query))
+	const halfLifeDays = 30.0
 	type scored struct {
-		score int
+		score float64
 		i     int
 	}
 	var list []scored
 	for i, c := range chunks {
 		lower := strings.ToLower(c.Content)
-		score := 0
+		kw := 0
 		for _, w := range qw {
 			if strings.Contains(lower, w) {
-				score++
+				kw++
 			}
 		}
+		decay := temporalDecay(c.CreatedAt, halfLifeDays)
+		score := float64(kw) * decay
 		list = append(list, scored{score: score, i: i})
 	}
 	sort.Slice(list, func(a, b int) bool { return list[a].score > list[b].score })

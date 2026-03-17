@@ -26,6 +26,33 @@ import (
 
 const defaultWebPort = "1721"
 
+// turnWithContext 單輪對話與該輪附檔／網搜摘要，供濃縮時一併納入。
+type turnWithContext struct {
+	User       string
+	Assistant  string
+	DocSummary string
+	WebSummary string
+}
+
+// capRunesSummary 將 s 截斷為最多 maxRunes 個 rune，用於摘要欄位。
+func capRunesSummary(s string, maxRunes int) string {
+	s = strings.TrimSpace(s)
+	if s == "" || maxRunes <= 0 {
+		return ""
+	}
+	if utf8.RuneCountInString(s) <= maxRunes {
+		return s
+	}
+	n := 0
+	for i := range s {
+		if n >= maxRunes {
+			return s[:i] + "…"
+		}
+		n++
+	}
+	return s
+}
+
 // ensureMemoryFiles 建立記憶目錄與預設 SOUL.md / MEMORY.md（若不存在），方便使用者找到檔案。
 func ensureMemoryFiles(cfg *config.Config) {
 	memDir := filepath.Dir(cfg.ArchivalPath)
@@ -60,13 +87,13 @@ func main() {
 	tiers := memory.NewTiers(memoryDir, cfg.ShortTermCap, cfg.ShortCondenseTo, cfg.LongTermCap, cfg.LongCondenseTo, cfg.CoreCap, cfg.CoreCondenseTo, cfg.SnippetMaxRunes)
 	var knowledgeStore *knowledge.Store
 	if cfg.KnowledgeEnabled {
+		_ = os.MkdirAll(cfg.KnowledgePath, 0755)
 		knowledgeStore = knowledge.NewStore(cfg.KnowledgePath, cfg.KnowledgeChunkRunes, cfg.KnowledgeOverlap, cfg.KnowledgeExpandLinks, cfg.KnowledgeExpandMax)
-		log.Printf("[知識庫] path=%s top_k=%d expand_links=%v", cfg.KnowledgePath, cfg.KnowledgeTopK, cfg.KnowledgeExpandLinks)
+		log.Printf("[知識庫] 儲存位置=%s（chunks.jsonl）top_k=%d expand_links=%v", knowledgeStore.Path(), cfg.KnowledgeTopK, cfg.KnowledgeExpandLinks)
 	}
 	var recentMu sync.Mutex
-	var recentTurns []struct{ User, Assistant string }
-	var condenseBuffer []struct{ User, Assistant string }
-	const maxRecentTurns = 20
+	var recentTurns []turnWithContext
+	var condenseBuffer []turnWithContext
 	const condenseRounds = 20
 	searchBackend := &search.Backend{
 		Kind:         cfg.SearchBackend,
@@ -133,6 +160,7 @@ func main() {
 		}
 		var userText string
 		docContext := ""
+		var ingestContent, ingestSource string // 當使用者說「加入知識庫」時，若有附檔/網頁/本機檔內容則存該內容，否則存模型回覆
 
 		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 			if err := r.ParseMultipartForm(32 << 20); err != nil {
@@ -169,6 +197,7 @@ func main() {
 					return
 				}
 				docContext = "## 附檔內容（上傳檔案）\n（以下為使用者上傳檔案的擷取文字，請直接依內容回答。）\n\n" + extracted + "\n\n"
+				ingestContent, ingestSource = extracted, header.Filename
 				if userText == "" {
 					userText = "請根據上述附檔內容回答。"
 				}
@@ -176,7 +205,7 @@ func main() {
 					if n, err := knowledgeStore.Ingest(extracted, header.Filename); err != nil {
 						log.Printf("[知識庫] ingest %q: %v", header.Filename, err)
 					} else {
-						log.Printf("[知識庫] ingest %q: %d chunks", header.Filename, n)
+						log.Printf("[知識庫] ingest %q: %d chunks → %s", header.Filename, n, knowledgeStore.Path())
 					}
 				}
 			} else if userText == "" {
@@ -211,6 +240,7 @@ func main() {
 					return
 				}
 				docContext = "## 附檔內容（網頁）\n（以下為程式已抓取的正文，請直接依內容回答，勿說「正在聯網」「正在讀取」「正在思考」等。）\n\n" + extracted + "\n\n"
+				ingestContent, ingestSource = extracted, url
 				if strings.TrimSpace(rest) != "" {
 					userText = strings.TrimSpace(rest)
 				} else {
@@ -228,11 +258,29 @@ func main() {
 					return
 				}
 				docContext = "## 附檔內容（本機檔案）\n（以下為程式從本機路徑擷取的文字，請直接依內容回答。）\n\n" + extracted + "\n\n"
+				ingestContent, ingestSource = extracted, localPath
 				if strings.TrimSpace(rest) != "" {
 					userText = strings.TrimSpace(rest)
 				} else {
 					userText = "請根據上述檔案內容回答。"
 				}
+			}
+		}
+
+		var writePath string
+		var addToKnowledge bool
+		if knowledgeStore != nil {
+			lower := strings.ToLower(userText)
+			if strings.Contains(lower, "加入知識庫") || strings.Contains(lower, "寫入知識庫") || strings.Contains(lower, "存進知識庫") {
+				addToKnowledge = true
+			}
+		}
+		if writeP, rest, ok := parseWriteFileIntent(userText); ok {
+			writePath = writeP
+			if strings.TrimSpace(rest) != "" {
+				userText = strings.TrimSpace(rest)
+			} else {
+				userText = "請撰寫內容，你的本則回覆將被寫入上述路徑。"
 			}
 		}
 
@@ -296,27 +344,46 @@ func main() {
 			webContext = "(無)"
 		}
 
-		// 答覆 context = 當前1 + 靈魂1 + 核心2 + 長期3 + 短期5
+		// 答覆 context = 當前1 + 靈魂1 + 核心2 + 長期3 + 短期5；並組本輪注入的記憶條目供 SSE 回傳
 		currentFact := tiers.GetCurrentFact()
 		soul := backstory.GetSoul()
 		coreHits := tiers.CoreHits(userText, cfg.MemoryCoreK)
 		longHits := tiers.LongTermHits(userText, cfg.MemoryLongK)
 		shortHits := tiers.ShortTermHits(userText, cfg.MemoryShortK)
 		var memLines []string
+		var memoryUsed []struct{ Layer, Preview string }
+		capPreview := func(s string, n int) string {
+			if n <= 0 || utf8.RuneCountInString(s) <= n {
+				return s
+			}
+			count := 0
+			for i := range s {
+				if count >= n {
+					return s[:i] + "…"
+				}
+				count++
+			}
+			return s
+		}
 		if currentFact != "" && cfg.MemoryCurrentK > 0 {
 			memLines = append(memLines, "- [當前] "+capRune(currentFact))
+			memoryUsed = append(memoryUsed, struct{ Layer, Preview string }{"當前", capPreview(currentFact, 80)})
 		}
 		if soul != "" && cfg.MemorySoulK > 0 {
 			memLines = append(memLines, "- [靈魂] "+capRune(soul))
+			memoryUsed = append(memoryUsed, struct{ Layer, Preview string }{"靈魂", capPreview(soul, 80)})
 		}
 		for _, s := range coreHits {
 			memLines = append(memLines, "- [核心] "+capRune(s))
+			memoryUsed = append(memoryUsed, struct{ Layer, Preview string }{"核心", capPreview(s, 80)})
 		}
 		for _, s := range longHits {
 			memLines = append(memLines, "- [長期] "+capRune(s))
+			memoryUsed = append(memoryUsed, struct{ Layer, Preview string }{"長期", capPreview(s, 80)})
 		}
 		for _, s := range shortHits {
 			memLines = append(memLines, "- [短期] "+capRune(s))
+			memoryUsed = append(memoryUsed, struct{ Layer, Preview string }{"短期", capPreview(s, 80)})
 		}
 		memoryContext := strings.Join(memLines, "\n")
 		if memoryContext == "" {
@@ -325,14 +392,15 @@ func main() {
 
 		var knowledgeContext string
 		if cfg.KnowledgeEnabled && knowledgeStore != nil {
+			if summary := knowledgeStore.Summary(); summary != "" {
+				knowledgeContext = "## 知識庫摘要（必讀）\n" + summary + "\n\n"
+			}
 			knowledgeLines := knowledgeStore.Retrieve(userText, cfg.KnowledgeTopK, cfg.SnippetMaxRunes)
 			if len(knowledgeLines) > 0 {
-				knowledgeContext = "## 知識庫（我的閱讀材料）\n" + strings.Join(knowledgeLines, "\n")
+				knowledgeContext += "## 知識庫（我的閱讀材料）\n" + strings.Join(knowledgeLines, "\n")
 			} else {
-				knowledgeContext = "## 知識庫（我的閱讀材料）\n(無)"
+				knowledgeContext += "## 知識庫（我的閱讀材料）\n(無)"
 			}
-		} else {
-			knowledgeContext = ""
 		}
 
 		summary := backstory.GetMemory()
@@ -344,7 +412,10 @@ func main() {
 		timeStr := now.Format("15:04")
 		nowSentence := "本則對話的當前時間：" + naturalDate + " " + strconv.Itoa(hour) + "點" + strconv.Itoa(min) + "分。\n"
 		timeBlock := "## 當前日期與時間\n" + nowSentence + zoneLine + "\n當前日期: " + dateStr + "\n當前時刻: " + timeStr + "（24小時制）\n"
-		abilityBlock := "## 能力邊界\n你可依本則對話、記憶、即時搜尋、知識庫（我的閱讀材料）與上方的「附檔內容」（若有）回答。若有「即時」搜尋結果，請僅依該區塊內容作答；文末引用來源將由系統自動附上，勿編造或猜測連結。\n**讀本機檔**：你可以讀取使用者電腦上的檔案。當使用者輸入「讀 路徑」或「讀取 路徑」（例如：讀 /home/xxx/file.pdf），系統會將該檔內容注入「附檔內容」供你回答。若使用者問「你能讀取我電腦的檔案嗎」「看得到我電腦的檔案嗎」等，請明確回答「可以，請輸入「讀」或「讀取」加上本機路徑，例如：讀 /path/to/file」勿回答「不可以」或「沒有此能力」。\n讀網頁、寫檔、搜尋：同上，依系統注入的附檔與即時區塊回答。若問「你能做什麼」請簡短說明讀檔（讀/讀取+路徑）、讀網頁、寫檔、搜尋即可，勿輸出「正在聯網」「正在思考」等語句。回覆要點：僅依「即時」與「附檔內容」區塊回答，沒寫到的不要猜。簡短對談、不列點。若使用者只發「？？」「蛤」「啥」等極短句，簡短確認即可，勿反嗆。"
+		abilityBlock := "## 能力邊界\n你可依本則對話、記憶、即時搜尋、知識庫（我的閱讀材料）與上方的「附檔內容」（若有）回答。若有「即時」搜尋結果，請僅依該區塊內容作答；文末引用來源將由系統自動附上，勿編造或猜測連結。\n**讀本機檔**：你可以讀取使用者電腦上的檔案。當使用者輸入「讀 路徑」或「讀取 路徑」（例如：讀 /home/xxx/file.pdf），系統會將該檔內容注入「附檔內容」供你回答。若使用者問「你能讀取我電腦的檔案嗎」「看得到我電腦的檔案嗎」等，請明確回答「可以，請輸入「讀」或「讀取」加上本機路徑，例如：讀 /path/to/file」勿回答「不可以」或「沒有此能力」。\n**寫本機檔**：當使用者輸入「寫 路徑」或「寫入 路徑」（限工作區內），系統會將你本則回覆的完整內容寫入該路徑；你可依其指示撰寫文檔、摘要等。若問「你能寫檔嗎」請回答可以，並說明輸入「寫」或「寫入」加上工作區內路徑即可。\n讀網頁、搜尋：同上，依系統注入的附檔與即時區塊回答。若問「你能做什麼」請簡短說明讀檔（讀/讀取+路徑）、寫檔（寫/寫入+路徑）、讀網頁、搜尋、知識庫（若啟用）即可，勿輸出「正在聯網」「正在思考」等語句。回覆要點：僅依「即時」與「附檔內容」區塊回答，沒寫到的不要猜。簡短對談、不列點。若使用者只發「？？」「蛤」「啥」等極短句，簡短確認即可，勿反嗆。"
+		if knowledgeStore != nil {
+			abilityBlock += "\n**寫入知識庫**：當使用者說「加入知識庫」「寫入知識庫」「存進知識庫」等，若本則有附檔／網頁／本機檔內容，系統會將**該內容**存入知識庫；若無則將你的本則回覆存入。你可簡短確認即可，勿聲稱「無法寫入」。"
+		}
 		if cfg.OutputLang != "" {
 			abilityBlock += "\n**輸出語言**：請一律使用「" + cfg.OutputLang + "」回覆。"
 		}
@@ -358,7 +429,7 @@ func main() {
 			"\n\n" + abilityBlock
 
 		recentMu.Lock()
-		turns := make([]struct{ User, Assistant string }, len(recentTurns))
+		turns := make([]turnWithContext, len(recentTurns))
 		copy(turns, recentTurns)
 		recentMu.Unlock()
 		messages := []llm.Message{{Role: "system", Content: systemPrompt}}
@@ -390,23 +461,57 @@ func main() {
 			sourcesJSON, _ := json.Marshal(map[string]interface{}{"sources": sourcesPayload})
 			writeSSE(w, "data: "+string(sourcesJSON)+"\n\n")
 		}
+		memoryUsedJSON, _ := json.Marshal(map[string]interface{}{"memory_used": memoryUsed})
+		writeSSE(w, "data: "+string(memoryUsedJSON)+"\n\n")
 		writeSSE(w, "data: [DONE]\n\n")
 		recentMu.Lock()
-		pair := struct{ User, Assistant string }{userText, fullResponse}
-		recentTurns = append(recentTurns, pair)
-		if len(recentTurns) > maxRecentTurns {
-			recentTurns = recentTurns[len(recentTurns)-maxRecentTurns:]
+		pair := turnWithContext{
+			User:       userText,
+			Assistant:  fullResponse,
+			DocSummary: capRunesSummary(docContext, 200),
+			WebSummary: capRunesSummary(webContext, 200),
 		}
-		condenseBuffer = append(condenseBuffer, pair)
-		var toCondense []struct{ User, Assistant string }
-		if len(condenseBuffer) >= condenseRounds {
-			toCondense = make([]struct{ User, Assistant string }, condenseRounds)
-			copy(toCondense, condenseBuffer[len(condenseBuffer)-condenseRounds:])
-			condenseBuffer = nil
+		recentTurns = append(recentTurns, pair)
+		if len(recentTurns) > cfg.RecentTurns {
+			recentTurns = recentTurns[len(recentTurns)-cfg.RecentTurns:]
+		}
+		var toCondense []turnWithContext
+		if cfg.MemoryAutoShort {
+			condenseBuffer = append(condenseBuffer, pair)
+			if len(condenseBuffer) >= condenseRounds {
+				toCondense = make([]turnWithContext, condenseRounds)
+				copy(toCondense, condenseBuffer[len(condenseBuffer)-condenseRounds:])
+				condenseBuffer = nil
+			}
 		}
 		recentMu.Unlock()
 		appendConversationLog(memoryDir, userText, fullResponse)
-		if len(toCondense) == condenseRounds {
+		if writePath != "" && pathUnderWorkspace(writePath, cfg.Workspace) {
+			if err := os.MkdirAll(filepath.Dir(writePath), 0755); err == nil {
+				if err := os.WriteFile(writePath, []byte(fullResponse), 0644); err != nil {
+					log.Printf("[寫檔] %q: %v", writePath, err)
+				} else {
+					log.Printf("[寫檔] 已寫入 %q", writePath)
+				}
+			}
+		} else if writePath != "" {
+			log.Printf("[寫檔] 略過（路徑須在工作區內）: %q", writePath)
+		}
+		if addToKnowledge && knowledgeStore != nil {
+			content, source := ingestContent, ingestSource
+			if content == "" {
+				content, source = fullResponse, "對話寫入"
+			}
+			if content != "" {
+				n, err := knowledgeStore.Ingest(content, source)
+				if err != nil {
+					log.Printf("[知識庫] ingest %q: %v", source, err)
+				} else {
+					log.Printf("[知識庫] ingest %q: %d chunks → %s", source, n, knowledgeStore.Path())
+				}
+			}
+		}
+		if len(toCondense) == condenseRounds && cfg.MemoryAutoShort {
 			go condense20RoundsAndPush(cfg, chatProvider, toCondense, tiers, backstory)
 		}
 	}
@@ -493,8 +598,15 @@ func main() {
 		switch r.Method {
 		case http.MethodGet:
 			list := knowledgeStore.ListSources()
+			storagePath := knowledgeStore.Path()
+			if storagePath == "" {
+				storagePath = "(未設定)"
+			}
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"sources": list})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"sources":       list,
+				"storage_path": storagePath,
+			})
 		case http.MethodDelete:
 			source := r.URL.Query().Get("source")
 			if source == "" {
@@ -714,19 +826,91 @@ func parseReadLocalFileIntent(text string) (localPath, rest string, ok bool) {
 	return path, rest, true
 }
 
-// condense20RoundsAndPush 將 20 輪當前對話解構濃縮成 1 句，送入短期；若短期滿則觸發後續濃縮鏈。
-func condense20RoundsAndPush(cfg *config.Config, provider llm.Provider, twentyRounds []struct{ User, Assistant string }, tiers *memory.Tiers, backstory *memory.Backstory) {
+// parseWriteFileIntent 解析「寫 路徑」或「寫入 路徑」，支援 ~ 與引號包住含空格路徑；回傳展開後的本機路徑與剩餘文字。
+func parseWriteFileIntent(text string) (localPath, rest string, ok bool) {
+	s := strings.TrimSpace(text)
+	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "寫入 ") {
+		s = strings.TrimSpace(strings.TrimPrefix(s, "寫入 "))
+	} else if strings.HasPrefix(lower, "寫 ") {
+		s = strings.TrimSpace(strings.TrimPrefix(s, "寫 "))
+	} else {
+		return "", "", false
+	}
+	if s == "" {
+		return "", "", false
+	}
+	var path string
+	if strings.HasPrefix(s, "\"") {
+		end := strings.Index(s[1:], "\"")
+		if end < 0 {
+			return "", "", false
+		}
+		path = s[1 : 1+end]
+		rest = strings.TrimSpace(s[1+end+1:])
+	} else {
+		path = s
+		rest = ""
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", "", false
+	}
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", "", false
+		}
+		if path == "~" {
+			path = home
+		} else if path == "~/" || strings.HasPrefix(path, "~/") {
+			path = filepath.Join(home, path[2:])
+		} else {
+			path = filepath.Join(home, path[1:])
+		}
+	}
+	path = filepath.Clean(path)
+	return path, rest, true
+}
+
+// pathUnderWorkspace 回傳 path 是否在 workspace 目錄內（含子目錄），避免寫到工作區外。
+func pathUnderWorkspace(path, workspace string) bool {
+	if workspace == "" {
+		return false
+	}
+	absPath, err1 := filepath.Abs(path)
+	absWorkspace, err2 := filepath.Abs(workspace)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absWorkspace, absPath)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// condense20RoundsAndPush 將 20 輪當前對話解構濃縮成 1 句，送入短期；若短期滿且 MemoryAutoLong 則觸發後續濃縮鏈。納入每輪附檔／網搜摘要供濃縮時參考。
+func condense20RoundsAndPush(cfg *config.Config, provider llm.Provider, twentyRounds []turnWithContext, tiers *memory.Tiers, backstory *memory.Backstory) {
 	var buf strings.Builder
 	for i, p := range twentyRounds {
 		buf.WriteString("使用者：")
 		buf.WriteString(p.User)
 		buf.WriteString("\n助手：")
 		buf.WriteString(p.Assistant)
+		if p.DocSummary != "" {
+			buf.WriteString("\n[附檔摘要] ")
+			buf.WriteString(p.DocSummary)
+		}
+		if p.WebSummary != "" {
+			buf.WriteString("\n[網搜摘要] ")
+			buf.WriteString(p.WebSummary)
+		}
 		if i < len(twentyRounds)-1 {
 			buf.WriteString("\n\n")
 		}
 	}
-	prompt := "以下是最近 20 輪對話（使用者與助手交替）。請解構後濃縮成「一句」關鍵事實或偏好，不准廢話、不准重複對話內容。產出恰好一句。\n\n" + buf.String()
+	prompt := "以下是最近 20 輪對話（使用者與助手交替），部分輪次附有附檔或網搜摘要。請解構後濃縮成「一句」關鍵事實或偏好，可涵蓋依據的來源；不准廢話、不准重複對話內容。產出恰好一句。\n\n" + buf.String()
 	one, err := provider.Generate(prompt)
 	if err != nil {
 		log.Printf("condense 20→1: %v", err)
@@ -748,7 +932,7 @@ func condense20RoundsAndPush(cfg *config.Config, provider llm.Provider, twentyRo
 	}
 	tiers.SetCurrentFact(one)
 	needShort, shortBatch := tiers.AddToShortTerm(one)
-	if needShort && len(shortBatch) > 0 {
+	if needShort && len(shortBatch) > 0 && cfg.MemoryAutoLong {
 		condensed := runCondenseShortToLong(provider, shortBatch, cfg.ShortCondenseTo, cfg.SnippetMaxRunes)
 		if len(condensed) > 0 {
 			needLong, longBatch := tiers.AppendLongTerm(condensed)

@@ -159,6 +159,22 @@ body {
 }
 .msg-sources-list a:hover { text-decoration: underline; }
 
+/* 本輪注入的記憶條目（可摺疊） */
+.msg-memory-used {
+	margin-top: 0.5rem;
+	padding-top: 0.5rem;
+	border-top: 1px solid var(--border);
+	font-size: 0.8rem;
+	color: var(--text-muted);
+}
+.msg-memory-used summary { cursor: pointer; }
+.msg-memory-used-list {
+	margin: 0.25rem 0 0;
+	padding-left: 1.25rem;
+	list-style: disc;
+}
+.msg-memory-used-list li { margin-bottom: 0.2rem; }
+
 .chat-input-wrap {
 	position: relative;
 	flex-shrink: 0;
@@ -306,6 +322,8 @@ body {
 	cursor: pointer;
 }
 .knowledge-panel-err, .knowledge-panel-empty { margin: 0 0 0.5rem; font-size: 0.85rem; color: var(--text-muted); }
+.knowledge-panel-path { margin: 0 0 0.5rem; font-size: 0.8rem; color: var(--text-muted); }
+.knowledge-panel-path code { font-size: 0.75rem; word-break: break-all; }
 
 .chat-input {
 	flex: 1;

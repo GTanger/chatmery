@@ -82,10 +82,12 @@
 		}).then(function (data) {
 			if (!data || !data.sources) return;
 			var list = data.sources;
+			var pathDisplay = (data.storage_path && String(data.storage_path).trim()) ? data.storage_path : '(無法取得路徑)';
+			var pathHtml = '<p class="knowledge-panel-path">儲存位置：<code>' + escapeHtml(pathDisplay) + '</code></p>';
 			if (list.length === 0) {
-				knowledgePanel.innerHTML = '<p class="knowledge-panel-empty">尚無來源</p><button type="button" class="knowledge-panel-close">關閉</button>';
+				knowledgePanel.innerHTML = pathHtml + '<p class="knowledge-panel-empty">尚無來源</p><button type="button" class="knowledge-panel-close">關閉</button>';
 			} else {
-				var html = '<ul class="knowledge-sources-list">';
+				var html = pathHtml + '<ul class="knowledge-sources-list">';
 				for (var i = 0; i < list.length; i++) {
 					var s = list[i];
 					html += '<li><span class="knowledge-source-name">' + escapeHtml(s) + '</span> <button type="button" class="knowledge-delete-btn" data-source="' + escapeAttr(s) + '" title="刪除此來源">刪除</button></li>';
@@ -230,35 +232,56 @@
 			const decoder = new TextDecoder();
 			let full = '';
 			var streamSources = null;
+			var streamMemoryUsed = null;
 			function read() {
 				reader.read().then(function (r) {
 					if (r.done) {
 						updateStreamBody(streamBody, full || '(無回覆)', true);
-						if (streamSources && streamSources.length && streamBody && streamBody.parentNode) {
+						if (streamBody && streamBody.parentNode) {
 							var wrap = streamBody.parentNode;
-							var div = document.createElement('div');
-							div.className = 'msg-sources';
-							div.setAttribute('role', 'complementary');
-							var heading = document.createElement('p');
-							heading.className = 'msg-sources-title';
-							heading.textContent = '引用來源';
-							div.appendChild(heading);
-							var ul = document.createElement('ul');
-							ul.className = 'msg-sources-list';
-							for (var si = 0; si < streamSources.length; si++) {
-								var s = streamSources[si];
-								var li = document.createElement('li');
-								var a = document.createElement('a');
-								a.href = s.url || '#';
-								a.target = '_blank';
-								a.rel = 'noopener noreferrer';
-								a.textContent = (s.title && s.title.trim()) ? s.title : s.url;
-								a.title = s.url;
-								li.appendChild(a);
-								ul.appendChild(li);
+							if (streamSources && streamSources.length) {
+								var div = document.createElement('div');
+								div.className = 'msg-sources';
+								div.setAttribute('role', 'complementary');
+								var heading = document.createElement('p');
+								heading.className = 'msg-sources-title';
+								heading.textContent = '引用來源';
+								div.appendChild(heading);
+								var ul = document.createElement('ul');
+								ul.className = 'msg-sources-list';
+								for (var si = 0; si < streamSources.length; si++) {
+									var s = streamSources[si];
+									var li = document.createElement('li');
+									var a = document.createElement('a');
+									a.href = s.url || '#';
+									a.target = '_blank';
+									a.rel = 'noopener noreferrer';
+									a.textContent = (s.title && s.title.trim()) ? s.title : s.url;
+									a.title = s.url;
+									li.appendChild(a);
+									ul.appendChild(li);
+								}
+								div.appendChild(ul);
+								wrap.appendChild(div);
 							}
-							div.appendChild(ul);
-							wrap.appendChild(div);
+							if (streamMemoryUsed && streamMemoryUsed.length) {
+								var memDiv = document.createElement('details');
+								memDiv.className = 'msg-memory-used';
+								memDiv.setAttribute('role', 'complementary');
+								var sum = document.createElement('summary');
+								sum.textContent = '本輪記憶（' + streamMemoryUsed.length + ' 條）';
+								memDiv.appendChild(sum);
+								var memUl = document.createElement('ul');
+								memUl.className = 'msg-memory-used-list';
+								for (var mi = 0; mi < streamMemoryUsed.length; mi++) {
+									var m = streamMemoryUsed[mi];
+									var li = document.createElement('li');
+									li.innerHTML = '<strong>' + (m.layer || '') + '</strong>: ' + (m.preview || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+									memUl.appendChild(li);
+								}
+								memDiv.appendChild(memUl);
+								wrap.appendChild(memDiv);
+							}
 						}
 						if (serverWasDown) {
 							showRestartNotification();
@@ -277,6 +300,8 @@
 								const j = JSON.parse(data);
 								if (j.sources != null && Array.isArray(j.sources)) {
 									streamSources = j.sources;
+								} else if (j.memory_used != null && Array.isArray(j.memory_used)) {
+									streamMemoryUsed = j.memory_used;
 								} else if (j.text != null) {
 									full += j.text;
 									updateStreamBody(streamBody, full + '\u2026', true);

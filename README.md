@@ -45,6 +45,8 @@ cp chatmery.tuning.example chatmery.tuning
 | `CHATMERY_SEARCH_QUERY_LLM` | `true` 時以 LLM 依句意產出搜尋 query（Cursor 式）；預設 `true` |
 | `CHATMERY_OUTPUT_LANG` | 回覆一律使用的語言（如「繁體中文」）；留空不限制，預設 繁體中文 |
 | `CHATMERY_KNOWLEDGE_ENABLED` / `CHATMERY_KNOWLEDGE_PATH` / `CHATMERY_KNOWLEDGE_TOP_K` 等 | 模型知識庫（RAG）；見 chatmery.tuning.example 與 [模型知識庫—設計提案](doc/模型知識庫—設計提案.md) |
+| `CHATMERY_RECENT_TURNS` | 送進模型的近期對話輪次上限（1–100），預設 20 |
+| `CHATMERY_MEMORY_AUTO_SHORT` / `CHATMERY_MEMORY_AUTO_LONG` | 是否自動解構進短期、是否短期滿時濃縮進長期→靈魂；`false` 可關閉 |
 | `CHATMERY_MEMORY_LONG_K` / `CHATMERY_MEMORY_SESSION_K` / `CHATMERY_MEMORY_CORE_K` / `CHATMERY_WEB_SEARCH_MAX` / `CHATMERY_SNIPPET_MAX` | 答覆時記憶注入量（結構：當前1+靈魂1+核心2+長期3+短期5） |
 | `CHATMERY_SHORT_TERM_CAP` / `CHATMERY_SHORT_CONDENSE_TO` 等 | 四池容量與濃縮條數（見 chatmery.tuning 註解） |
 | `CHATMERY_EMBED_MODEL` / `CHATMERY_EMBED_PROVIDER` / `CHATMERY_EMBED_URL` | 向量檢索（目前四池為關鍵字檢索；可擴充） |
@@ -52,7 +54,7 @@ cp chatmery.tuning.example chatmery.tuning
 
 Workspace 下需有 **SOUL.md**（可選，無則用預設）、**MEMORY.md**（可選）。`memory/` 目錄會自動建立，內含四池：`short_term.jsonl`、`long_term.jsonl`、`core.jsonl`、`current.txt`（靈魂寫入 SOUL.md）。
 
-**對話上下文**：每次請求會帶上**最近 10 輪**使用者與助手的對話，模型依此接話，避免雞同鴨講。答覆時注入的記憶結構為：當前 1 + 靈魂 1 + 核心 2 + 長期 3 + 短期 5。
+**對話與記憶**：每次請求會帶上**最近 N 輪**使用者與助手的對話（N 由 `CHATMERY_RECENT_TURNS` 設定，預設 20）。答覆時注入的記憶結構為：當前 1 + 靈魂 1 + 核心 2 + 長期 3 + 短期 5；SSE 結束前會回傳本輪使用的記憶條目（`memory_used`）。記憶與知識庫分開：記憶＝四池一魂（對話解構／濃縮）；知識庫＝使用者攝入的閱讀材料。詳見 [對話與記憶—對照 Open WebUI、AnythingLLM 的建議](doc/對話與記憶—對照%20Open%20WebUI、AnythingLLM%20的建議.md)。
 
 ### 小模型使用建議（預設約 4B 等級）
 
